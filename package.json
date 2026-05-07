@@ -1,0 +1,21 @@
+{
+  "name": "pakbooks-ai-mvp",
+  "private": true,
+  "version": "0.1.0",
+  "description": "HisabDost / PakBooks AI - Pakistan-focused AI bookkeeping and compliance assistant MVP",
+  "packageManager": "pnpm@9.12.3",
+  "scripts": {
+    "dev": "pnpm --parallel --stream --filter @pakbooks/api --filter @pakbooks/web dev",
+    "dev:api": "pnpm --filter @pakbooks/api dev",
+    "dev:web": "pnpm --filter @pakbooks/web dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "format": "prettier --write \"**/*.{ts,tsx,js,json,md,css,prisma,yml,yaml}\"",
+    "db:generate": "pnpm --filter @pakbooks/api prisma:generate",
+    "db:migrate": "pnpm --filter @pakbooks/api prisma:migrate",
+    "db:seed": "pnpm --filter @pakbooks/api db:seed"
+  },
+  "devDependencies": {
+    "prettier": "^3.3.3"
+  }
+}

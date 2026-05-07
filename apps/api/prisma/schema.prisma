@@ -1,0 +1,571 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum OrganizationType {
+  BUSINESS
+  ACCOUNTANT_FIRM
+}
+
+enum MemberRole {
+  OWNER
+  ADMIN
+  ACCOUNTANT
+  STAFF
+  VIEWER
+  FIRM_OWNER
+  FIRM_PARTNER
+  FIRM_MANAGER
+  FIRM_ACCOUNTANT
+  FIRM_STAFF
+  SUPER_ADMIN
+}
+
+enum EntityType {
+  INDIVIDUAL
+  SOLE_PROPRIETOR
+  AOP
+  PVT_LTD
+}
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  INCOME
+  EXPENSE
+}
+
+enum JournalStatus {
+  DRAFT
+  POSTED
+  REVERSED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+enum DocumentType {
+  RECEIPT
+  INVOICE
+  TAX_DOCUMENT
+  BANK_STATEMENT
+  CONTRACT
+  OTHER
+}
+
+enum OcrStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  NOT_REQUIRED
+}
+
+enum ComplianceStatus {
+  UPCOMING
+  DUE
+  OVERDUE
+  COMPLETED
+  WAIVED
+}
+
+model User {
+  id                String   @id @default(cuid())
+  name              String
+  email             String   @unique
+  phone             String?
+  passwordHash      String
+  preferredLanguage String   @default("roman_urdu")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  memberships           OrganizationMember[]
+  businessMemberships   BusinessMember[]
+  auditLogs             AuditLog[]
+  accountantClientLinks AccountantClientLink[] @relation("AccountantUser")
+  accountHeadRequests   AccountHeadRequest[] @relation("AccountHeadRequestedBy")
+  decidedAccountRequests AccountHeadRequest[] @relation("AccountHeadDecidedBy")
+  reportExports         ReportExportLog[]
+  reportExportRequests  ReportExportRequest[] @relation("ReportExportRequestedBy")
+  decidedReportRequests ReportExportRequest[] @relation("ReportExportDecidedBy")
+}
+
+model Organization {
+  id              String           @id @default(cuid())
+  name            String
+  type            OrganizationType @default(BUSINESS)
+  planName        String           @default("Firm Starter")
+  clientSlotLimit Int              @default(10)
+  firmUserLimit   Int              @default(5)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  members          OrganizationMember[]
+  businesses       Business[]
+  accountTemplates AccountTemplate[]
+  reportExports    ReportExportLog[]
+  reportRequests   ReportExportRequest[]
+}
+
+model OrganizationMember {
+  id             String     @id @default(cuid())
+  organizationId String
+  userId         String
+  role           MemberRole @default(OWNER)
+  status         String     @default("active")
+  createdAt      DateTime   @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+}
+
+model Business {
+  id                   String     @id @default(cuid())
+  organizationId       String
+  name                 String
+  legalName            String?
+  businessType         String?
+  entityType           EntityType @default(SOLE_PROPRIETOR)
+  city                 String?
+  ntn                  String?
+  strn                 String?
+  isSalesTaxRegistered Boolean    @default(false)
+  isWithholdingAgent   Boolean    @default(false)
+  isSecpRegistered     Boolean    @default(false)
+  fiscalYearStartMonth Int        @default(7)
+  baseCurrency         String     @default("PKR")
+  status               String     @default("active")
+  createdAt            DateTime   @default(now())
+  updatedAt            DateTime   @updatedAt
+
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  members          BusinessMember[]
+  accounts         Account[]
+  customers        Customer[]
+  vendors          Vendor[]
+  invoices         Invoice[]
+  expenses         Expense[]
+  payments         Payment[]
+  journalEntries   JournalEntry[]
+  documents        Document[]
+  complianceEvents BusinessComplianceEvent[]
+  auditLogs        AuditLog[]
+  accountantLinks  AccountantClientLink[]
+  aiActions        AiActionQueue[]
+  accountHeadRequests AccountHeadRequest[]
+  reportPermission ReportPermission?
+  reportExports    ReportExportLog[]
+  reportRequests   ReportExportRequest[]
+}
+
+model BusinessMember {
+  id         String   @id @default(cuid())
+  businessId String
+  userId     String
+  role       String   @default("CLIENT_OWNER")
+  status     String   @default("active")
+  createdAt  DateTime @default(now())
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, userId])
+}
+
+model Account {
+  id              String      @id @default(cuid())
+  businessId      String
+  code            String
+  name            String
+  type            AccountType
+  parentAccountId String?
+  description     String?
+  isSystem        Boolean     @default(false)
+  isActive        Boolean     @default(true)
+  requiresReview  Boolean     @default(false)
+  createdAt       DateTime    @default(now())
+
+  business     Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  parent       Account?      @relation("AccountParent", fields: [parentAccountId], references: [id])
+  children     Account[]     @relation("AccountParent")
+  journalLines JournalLine[]
+
+  @@unique([businessId, code])
+}
+
+model Customer {
+  id             String   @id @default(cuid())
+  businessId     String
+  name           String
+  phone          String?
+  email          String?
+  ntn            String?
+  strn           String?
+  address        String?
+  openingBalance Decimal  @default(0)
+  createdAt      DateTime @default(now())
+
+  business Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  invoices Invoice[]
+}
+
+model Vendor {
+  id             String   @id @default(cuid())
+  businessId     String
+  name           String
+  phone          String?
+  email          String?
+  ntn            String?
+  strn           String?
+  address        String?
+  openingBalance Decimal  @default(0)
+  createdAt      DateTime @default(now())
+
+  business Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  expenses Expense[]
+}
+
+model Invoice {
+  id             String        @id @default(cuid())
+  businessId     String
+  customerId     String?
+  invoiceNumber  String
+  invoiceDate    DateTime
+  dueDate        DateTime?
+  subtotal       Decimal
+  taxAmount      Decimal       @default(0)
+  discountAmount Decimal       @default(0)
+  totalAmount    Decimal
+  status         InvoiceStatus @default(SENT)
+  notes          String?
+  pdfUrl         String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  business Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  customer Customer? @relation(fields: [customerId], references: [id])
+  items    InvoiceItem[]
+
+  @@unique([businessId, invoiceNumber])
+}
+
+model InvoiceItem {
+  id          String  @id @default(cuid())
+  invoiceId   String
+  description String
+  quantity    Decimal @default(1)
+  unitPrice   Decimal
+  taxAmount   Decimal @default(0)
+  lineTotal   Decimal
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+}
+
+model Expense {
+  id                String   @id @default(cuid())
+  businessId        String
+  vendorId          String?
+  expenseDate       DateTime
+  kind              String   @default("expense") // expense or purchase
+  categoryAccountId String
+  paymentAccountId  String?
+  amount            Decimal
+  taxAmount         Decimal  @default(0)
+  description       String?
+  documentId        String?
+  status            String   @default("posted")
+  createdAt         DateTime @default(now())
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  vendor   Vendor?  @relation(fields: [vendorId], references: [id])
+}
+
+model Payment {
+  id               String   @id @default(cuid())
+  businessId       String
+  direction        String
+  partyType        String?
+  partyId          String?
+  amount           Decimal
+  paymentMethod    String
+  paymentAccountId String
+  paymentDate      DateTime
+  referenceNo      String?
+  notes            String?
+  createdAt        DateTime @default(now())
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+}
+
+model JournalEntry {
+  id           String        @id @default(cuid())
+  businessId   String
+  entryDate    DateTime
+  sourceType   String
+  sourceId     String?
+  narration    String
+  status       JournalStatus @default(POSTED)
+  createdById  String?
+  approvedById String?
+  lockedAt     DateTime?
+  createdAt    DateTime      @default(now())
+
+  business Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  lines    JournalLine[]
+}
+
+model JournalLine {
+  id             String  @id @default(cuid())
+  journalEntryId String
+  accountId      String
+  debit          Decimal @default(0)
+  credit         Decimal @default(0)
+  partyType      String?
+  partyId        String?
+  description    String?
+
+  journalEntry JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  account      Account      @relation(fields: [accountId], references: [id])
+}
+
+model Document {
+  id               String       @id @default(cuid())
+  businessId       String
+  uploadedById     String?
+  fileUrl          String
+  fileType         String?
+  originalFilename String
+  documentType     DocumentType @default(OTHER)
+  linkedEntityType String?
+  linkedEntityId   String?
+  ocrStatus        OcrStatus    @default(NOT_REQUIRED)
+  manualJson       Json?
+  createdAt        DateTime     @default(now())
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  ocrJobs  OcrJob[]
+}
+
+model OcrJob {
+  id              String    @id @default(cuid())
+  documentId      String
+  provider        String
+  rawText         String?
+  extractedJson   Json?
+  confidenceScore Decimal?
+  status          OcrStatus @default(PENDING)
+  errorMessage    String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+}
+
+model ComplianceRuleTemplate {
+  id                  String   @id @default(cuid())
+  code                String   @unique
+  title               String
+  authority           String
+  entityType          String?
+  conditionJson       Json?
+  frequency           String
+  dueDateRuleJson     Json?
+  reminderOffsetsJson Json?
+  isActive            Boolean  @default(true)
+  effectiveFrom       DateTime @default(now())
+  effectiveTo         DateTime?
+
+  events BusinessComplianceEvent[]
+}
+
+model BusinessComplianceEvent {
+  id             String           @id @default(cuid())
+  businessId     String
+  ruleTemplateId String?
+  title          String
+  authority      String
+  periodStart    DateTime?
+  periodEnd      DateTime?
+  dueDate        DateTime
+  status         ComplianceStatus @default(UPCOMING)
+  assignedToId   String?
+  completedById  String?
+  completedAt    DateTime?
+  notes          String?
+  createdAt      DateTime         @default(now())
+
+  business     Business                @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  ruleTemplate ComplianceRuleTemplate? @relation(fields: [ruleTemplateId], references: [id])
+}
+
+model AccountantClientLink {
+  id               String   @id @default(cuid())
+  businessId       String
+  accountantUserId String
+  accessLevel      String   @default("reviewer")
+  status           String   @default("active")
+  invitedAt        DateTime @default(now())
+  acceptedAt       DateTime?
+
+  business       Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  accountantUser User     @relation("AccountantUser", fields: [accountantUserId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, accountantUserId])
+}
+
+model AiActionQueue {
+  id                        String   @id @default(cuid())
+  businessId                String
+  userId                    String?
+  actionType                String
+  prompt                    String?
+  proposedPayloadJson       Json
+  confidenceScore           Decimal  @default(0)
+  status                    String   @default("pending") // pending, approved, rejected, edited
+  requiresConfirmation      Boolean  @default(true)
+  requiresAccountantReview  Boolean  @default(false)
+  resultJson                Json?
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+}
+
+
+model AccountTemplate {
+  id             String      @id @default(cuid())
+  organizationId String
+  code           String
+  name           String
+  type           AccountType
+  description    String?
+  category       String?
+  isTaxSensitive Boolean     @default(false)
+  isActive       Boolean     @default(true)
+  sortOrder      Int         @default(0)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, code])
+}
+
+model AccountHeadRequest {
+  id               String   @id @default(cuid())
+  businessId       String
+  requestedById    String?
+  decidedById      String?
+  requestedName    String
+  suggestedName    String
+  suggestedCode    String?
+  suggestedType    AccountType
+  suggestedCategory String?
+  reason           String?
+  duplicateAccountId String?
+  status           String   @default("pending") // pending, approved, rejected, merged, clarification_requested
+  decisionNote     String?
+  approvedAccountId String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  requestedBy User?    @relation("AccountHeadRequestedBy", fields: [requestedById], references: [id])
+  decidedBy   User?    @relation("AccountHeadDecidedBy", fields: [decidedById], references: [id])
+
+  @@index([businessId, status])
+}
+
+model ReportPermission {
+  id                                String   @id @default(cuid())
+  businessId                        String   @unique
+  allowClientOwnerViewReports        Boolean  @default(true)
+  allowClientOwnerGenerateReports    Boolean  @default(false)
+  allowClientOwnerExportReports      Boolean  @default(false)
+  allowClientManagerViewReports      Boolean  @default(true)
+  allowClientManagerGenerateReports  Boolean  @default(true)
+  allowClientManagerExportReports    Boolean  @default(false)
+  allowClientStaffViewReports        Boolean  @default(false)
+  allowClientStaffGenerateReports    Boolean  @default(false)
+  allowClientStaffExportReports      Boolean  @default(false)
+  createdAt                         DateTime @default(now())
+  updatedAt                         DateTime @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+}
+
+model ReportExportLog {
+  id              String   @id @default(cuid())
+  organizationId  String?
+  businessId      String
+  userId          String?
+  reportType      String
+  format          String
+  dateFrom        DateTime?
+  dateTo          DateTime?
+  selectedHeadsJson Json?
+  filtersJson     Json?
+  filename        String?
+  ipAddress       String?
+  createdAt       DateTime @default(now())
+
+  organization Organization? @relation(fields: [organizationId], references: [id])
+  business     Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user         User?         @relation(fields: [userId], references: [id])
+}
+
+model ReportExportRequest {
+  id              String   @id @default(cuid())
+  organizationId  String?
+  businessId      String
+  requestedById   String?
+  decidedById     String?
+  reportType      String
+  format          String
+  dateFrom        DateTime?
+  dateTo          DateTime?
+  selectedHeadsJson Json?
+  filtersJson     Json?
+  reason          String?
+  status          String   @default("pending") // pending, approved, rejected
+  decisionNote    String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  organization Organization? @relation(fields: [organizationId], references: [id])
+  business     Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  requestedBy  User?         @relation("ReportExportRequestedBy", fields: [requestedById], references: [id])
+  decidedBy    User?         @relation("ReportExportDecidedBy", fields: [decidedById], references: [id])
+
+  @@index([businessId, status])
+}
+
+model AuditLog {
+  id             String   @id @default(cuid())
+  organizationId String?
+  businessId     String?
+  userId         String?
+  action         String
+  entityType     String
+  entityId       String?
+  beforeJson     Json?
+  afterJson      Json?
+  ipAddress      String?
+  createdAt      DateTime @default(now())
+
+  business Business? @relation(fields: [businessId], references: [id])
+  user     User?     @relation(fields: [userId], references: [id])
+}
