@@ -1,62 +1,93 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
-import { AppShell } from '@/components/AppShell';
-import { ClientRequired } from '@/components/ClientRequired';
-import { Card, Select } from '@/components/Card';
-import { api, getBusinessId, money } from '@/lib/api';
-
-type Account = { id: string; code: string; name: string; type: string };
-type Ledger = { account: Account; closingBalance: number; rows: { date: string; narration: string; description?: string; debit: number; credit: number; balance: number; sourceType: string }[] };
-
 export default function LedgersPage() {
-  const params = useSearchParams();
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [selected, setSelected] = useState(params.get('account') || '1000');
-  const [ledger, setLedger] = useState<Ledger | null>(null);
-
-  async function load(account = selected) {
-    const businessId = getBusinessId();
-    if (!businessId) return;
-    const accs = await api<Account[]>(`/accounting/businesses/${businessId}/accounts`);
-    setAccounts(accs);
-    setLedger(await api<Ledger>(`/accounting/businesses/${businessId}/ledgers/${account}`));
-  }
-
-  useEffect(() => { load(selected); }, []);
-
-  async function change(code: string) {
-    setSelected(code);
-    await load(code);
-  }
-
   return (
-    <AppShell>
-      <ClientRequired>
-      <div className="mb-6 flex flex-col justify-between gap-4 md:flex-row md:items-center">
-        <div>
-          <h1 className="text-3xl font-bold">Ledgers</h1>
-          <p className="text-slate-600">Simple and accountant view of every account head.</p>
-        </div>
-        <Select value={selected} onChange={(e) => change(e.target.value)}>
-          {accounts.map((a) => <option key={a.id} value={a.code}>{a.code} — {a.name}</option>)}
-        </Select>
+    <main className="min-h-screen bg-slate-50 px-6 py-8">
+      <div className="mx-auto max-w-6xl space-y-6">
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-sm font-medium text-emerald-700">HisabDost AI</p>
+              <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-900">
+                Ledgers
+              </h1>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+                This page is ready for beta deployment. Ledger details will show
+                client-wise account activity, debit/credit movement, balances,
+                customer ledgers, supplier ledgers, cash ledger, bank ledger, and
+                accountant review notes.
+              </p>
+            </div>
+
+            <div className="rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+              Build-safe beta page
+            </div>
+          </div>
+        </section>
+
+        <section className="grid gap-4 md:grid-cols-3">
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="text-base font-semibold text-slate-900">
+              General Ledger
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              View account-wise posted entries with opening balance, debit,
+              credit, and closing balance.
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="text-base font-semibold text-slate-900">
+              Customer Ledger
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              Track customer invoices, receipts, receivables, and outstanding
+              balances.
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="text-base font-semibold text-slate-900">
+              Supplier Ledger
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              Track supplier bills, payments, payables, and pending balances.
+            </p>
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
+          <h2 className="text-base font-semibold text-amber-900">
+            Beta note
+          </h2>
+          <p className="mt-2 text-sm leading-6 text-amber-800">
+            For now, use Sales, Purchases, Expenses, Reports, and AI Assistant
+            for partner testing. The full ledger table can be reconnected after
+            the online deployment is stable.
+          </p>
+        </section>
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="text-base font-semibold text-slate-900">
+            Planned ledger filters
+          </h2>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-700">
+              Date range
+            </div>
+            <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-700">
+              Account head
+            </div>
+            <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-700">
+              Customer / supplier
+            </div>
+            <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-700">
+              Posted / draft
+            </div>
+          </div>
+        </section>
       </div>
-      {ledger ? <Card>
-        <div className="mb-4 flex justify-between gap-3">
-          <div><h2 className="text-xl font-bold">{ledger.account.code} — {ledger.account.name}</h2><p className="text-sm text-slate-500">{ledger.account.type}</p></div>
-          <div className="text-right"><p className="text-sm text-slate-500">Closing balance</p><b>{money(ledger.closingBalance)}</b></div>
-        </div>
-        <div className="overflow-hidden rounded-2xl border">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-slate-50"><tr><th className="p-3">Date</th><th>Narration</th><th className="text-right">Debit</th><th className="text-right">Credit</th><th className="p-3 text-right">Balance</th></tr></thead>
-            <tbody>{ledger.rows.map((r, i) => <tr key={i} className="border-t"><td className="p-3">{new Date(r.date).toLocaleDateString()}</td><td>{r.narration}<br /><span className="text-xs text-slate-500">{r.sourceType}</span></td><td className="text-right">{money(r.debit)}</td><td className="text-right">{money(r.credit)}</td><td className="p-3 text-right">{money(r.balance)}</td></tr>)}</tbody>
-          </table>
-          {!ledger.rows.length && <p className="p-6 text-center text-slate-500">No ledger activity yet.</p>}
-        </div>
-      </Card> : <Card>Please select a client company first.</Card>}
-      </ClientRequired>
-    </AppShell>
+    </main>
   );
 }
