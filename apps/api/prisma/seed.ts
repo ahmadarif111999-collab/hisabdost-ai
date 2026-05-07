@@ -3,6 +3,14 @@ import * as bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
 
+const firmName = 'ProBiz AI Firm';
+
+const ownerUser = {
+  name: 'Firm Owner',
+  email: 'demo@pakbooks.ai',
+  password: 'password123',
+};
+
 const partnerUsers = [
   {
     name: 'Ahmad Arif',
@@ -27,50 +35,84 @@ const partnerUsers = [
 ];
 
 async function main() {
-  const ownerPasswordHash = await bcrypt.hash('password123', 10);
+  const ownerPasswordHash = await bcrypt.hash(ownerUser.password, 10);
   const partnerPasswordHash = await bcrypt.hash('Probiz01', 10);
 
   const owner = await prisma.user.upsert({
-    where: { email: 'demo@pakbooks.ai' },
+    where: {
+      email: ownerUser.email.toLowerCase(),
+    },
     update: {
-      name: 'Firm Owner',
+      name: ownerUser.name,
       passwordHash: ownerPasswordHash,
     },
     create: {
-      name: 'Firm Owner',
-      email: 'demo@pakbooks.ai',
+      name: ownerUser.name,
+      email: ownerUser.email.toLowerCase(),
       phone: '+923001234567',
       passwordHash: ownerPasswordHash,
     },
   });
 
-  const existingFirmMembership = await prisma.organizationMember.findFirst({
+  const firstPartner = await prisma.user.upsert({
     where: {
-      userId: owner.id,
-      organization: {
-        type: 'ACCOUNTANT_FIRM',
-      },
+      email: partnerUsers[0].email.toLowerCase(),
     },
-    include: {
-      organization: true,
+    update: {
+      name: partnerUsers[0].name,
+      passwordHash: partnerPasswordHash,
+    },
+    create: {
+      name: partnerUsers[0].name,
+      email: partnerUsers[0].email.toLowerCase(),
+      passwordHash: partnerPasswordHash,
+    },
+  });
+
+  const existingPartnerFirmMembership =
+    await prisma.organizationMember.findFirst({
+      where: {
+        userId: firstPartner.id,
+        organization: {
+          type: 'ACCOUNTANT_FIRM',
+        },
+      },
+      include: {
+        organization: true,
+      },
+    });
+
+  const existingOwnerFirmMembership =
+    await prisma.organizationMember.findFirst({
+      where: {
+        userId: owner.id,
+        organization: {
+          type: 'ACCOUNTANT_FIRM',
+        },
+      },
+      include: {
+        organization: true,
+      },
+    });
+
+  const existingNamedFirm = await prisma.organization.findFirst({
+    where: {
+      name: firmName,
+      type: 'ACCOUNTANT_FIRM',
     },
   });
 
   const firmRecord =
-    existingFirmMembership?.organization ??
+    existingPartnerFirmMembership?.organization ??
+    existingOwnerFirmMembership?.organization ??
+    existingNamedFirm ??
     (await prisma.organization.create({
       data: {
-        name: 'HisabDost Accounting Firm',
+        name: firmName,
         type: 'ACCOUNTANT_FIRM',
         planName: 'Firm Starter',
         clientSlotLimit: 10,
         firmUserLimit: 10,
-        members: {
-          create: {
-            userId: owner.id,
-            role: 'FIRM_OWNER',
-          },
-        },
       },
     }));
 
@@ -79,11 +121,23 @@ async function main() {
       id: firmRecord.id,
     },
     data: {
-      name: 'HisabDost Accounting Firm',
+      name: firmName,
       type: 'ACCOUNTANT_FIRM',
       planName: 'Firm Starter',
       clientSlotLimit: 10,
       firmUserLimit: 10,
+    },
+  });
+
+  await prisma.organizationMember.deleteMany({
+    where: {
+      userId: owner.id,
+      organizationId: {
+        not: firm.id,
+      },
+      organization: {
+        type: 'ACCOUNTANT_FIRM',
+      },
     },
   });
 
@@ -122,6 +176,18 @@ async function main() {
       },
     });
 
+    await prisma.organizationMember.deleteMany({
+      where: {
+        userId: user.id,
+        organizationId: {
+          not: firm.id,
+        },
+        organization: {
+          type: 'ACCOUNTANT_FIRM',
+        },
+      },
+    });
+
     await prisma.organizationMember.upsert({
       where: {
         organizationId_userId: {
@@ -142,74 +208,14 @@ async function main() {
     });
   }
 
-  const templates = [
-    {
-      code: 'FBR_INCOME_TAX_RETURN_INDIVIDUAL_AOP',
-      title: 'Income tax return reminder',
-      authority: 'FBR',
-      frequency: 'yearly',
-      dueDateRuleJson: {
-        month: 9,
-        day: 30,
-        note: 'Configurable; verify with accountant/FBR.',
-      },
-      reminderOffsetsJson: [30, 14, 7, 1, 0],
-    },
-    {
-      code: 'FBR_SALES_TAX_MONTHLY_RETURN',
-      title: 'Monthly sales tax return review',
-      authority: 'FBR',
-      frequency: 'monthly',
-      dueDateRuleJson: {
-        day: 18,
-        monthOffset: 1,
-        note: 'Configurable; verify with accountant/FBR.',
-      },
-      reminderOffsetsJson: [10, 5, 2, 0],
-    },
-    {
-      code: 'MONTHLY_BOOK_CLOSE',
-      title: 'Monthly bookkeeping close',
-      authority: 'Internal',
-      frequency: 'monthly',
-      dueDateRuleJson: {
-        day: 5,
-        monthOffset: 1,
-      },
-      reminderOffsetsJson: [5, 2, 0],
-    },
-    {
-      code: 'SECP_ANNUAL_RETURN_REVIEW',
-      title: 'SECP annual return review',
-      authority: 'SECP',
-      frequency: 'yearly',
-      dueDateRuleJson: {
-        note: 'Configurable by admin/accountant. Do not hardcode final deadline.',
-      },
-      reminderOffsetsJson: [30, 14, 7, 1, 0],
-    },
-  ];
-
-  for (const template of templates) {
-    await prisma.complianceRuleTemplate.upsert({
-      where: {
-        code: template.code,
-      },
-      update: template,
-      create: template,
-    });
-  }
-
-  console.log('Seed complete');
+  console.log('Firm users connected successfully');
   console.log({
-    ownerEmail: owner.email,
-    ownerPassword: 'password123',
     firm: firm.name,
-    clientSlots: firm.clientSlotLimit,
     firmUserLimit: firm.firmUserLimit,
+    owner: owner.email,
     partnerPassword: 'Probiz01',
     partners: partnerUsers.map((partner) => partner.email),
-    note: 'No sample clients were created. Add real client companies from the Firm Dashboard.',
+    expectedFirmUserCount: 6,
   });
 }
 
