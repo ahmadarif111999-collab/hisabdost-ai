@@ -1,54 +1,19 @@
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
+import {
+  PROBIZ_FIRM,
+  PROBIZ_PARTNER_PASSWORD,
+  PROBIZ_PARTNERS,
+  normalizeEmail,
+} from '../src/config/probiz-beta.config';
 
 const prisma = new PrismaClient();
 
-const TARGET_FIRM = {
-  name: 'ProBiz Consultants',
-  type: 'ACCOUNTANT_FIRM' as const,
-  planName: 'Firm Starter',
-  clientSlotLimit: 10,
-  firmUserLimit: 5,
-};
-
-const PARTNERS = [
-  {
-    name: 'Ahmad Arif',
-    email: 'ahmadarif111999@gmail.com',
-    password: 'Probiz01',
-    role: 'FIRM_PARTNER' as const,
-  },
-  {
-    name: 'Yasir Javaid',
-    email: 'yjavaid01@gmail.com',
-    password: 'Probiz01',
-    role: 'FIRM_PARTNER' as const,
-  },
-  {
-    name: 'Maysum Zaidi',
-    email: 'maysumzaidi2001@gmail.com',
-    password: 'Probiz01',
-    role: 'FIRM_PARTNER' as const,
-  },
-  {
-    name: 'Asfand Sajjad',
-    email: 'asfandsajjid@gmail.com',
-    password: 'Probiz01',
-    role: 'FIRM_PARTNER' as const,
-  },
-  {
-    name: 'Ali Awan',
-    email: 'ali.awan9167@gmail.com',
-    password: 'Probiz01',
-    role: 'FIRM_PARTNER' as const,
-  },
-];
-
-async function getOrCreateTargetFirm() {
+async function getOrCreateProBizFirm() {
   const existingFirm = await prisma.organization.findFirst({
     where: {
-      name: TARGET_FIRM.name,
-      type: TARGET_FIRM.type,
+      name: PROBIZ_FIRM.name,
+      type: PROBIZ_FIRM.type,
     },
     orderBy: {
       createdAt: 'asc',
@@ -61,24 +26,31 @@ async function getOrCreateTargetFirm() {
         id: existingFirm.id,
       },
       data: {
-        name: TARGET_FIRM.name,
-        type: TARGET_FIRM.type,
-        planName: TARGET_FIRM.planName,
-        clientSlotLimit: TARGET_FIRM.clientSlotLimit,
-        firmUserLimit: TARGET_FIRM.firmUserLimit,
+        name: PROBIZ_FIRM.name,
+        type: PROBIZ_FIRM.type,
+        planName: PROBIZ_FIRM.planName,
+        clientSlotLimit: PROBIZ_FIRM.clientSlotLimit,
+        firmUserLimit: PROBIZ_FIRM.firmUserLimit,
       },
     });
   }
 
   return prisma.organization.create({
-    data: TARGET_FIRM,
+    data: {
+      name: PROBIZ_FIRM.name,
+      type: PROBIZ_FIRM.type,
+      planName: PROBIZ_FIRM.planName,
+      clientSlotLimit: PROBIZ_FIRM.clientSlotLimit,
+      firmUserLimit: PROBIZ_FIRM.firmUserLimit,
+    },
   });
 }
 
-async function seedPartnerUsers(firmId: string) {
-  for (const partner of PARTNERS) {
-    const email = partner.email.toLowerCase();
-    const passwordHash = await bcrypt.hash(partner.password, 10);
+async function seedPartnerAccess(firmId: string) {
+  const passwordHash = await bcrypt.hash(PROBIZ_PARTNER_PASSWORD, 10);
+
+  for (const partner of PROBIZ_PARTNERS) {
+    const email = normalizeEmail(partner.email);
 
     const user = await prisma.user.upsert({
       where: {
@@ -115,13 +87,6 @@ async function seedPartnerUsers(firmId: string) {
       },
     });
 
-    /**
-     * Important:
-     * If this partner already had an old personal accounting firm,
-     * keep the old firm record but deactivate the old membership.
-     * This prevents getFirmMembership/findFirst from selecting
-     * "Ahmed's Accounting Firm" before "ProBiz Consultants".
-     */
     await prisma.organizationMember.updateMany({
       where: {
         userId: user.id,
@@ -130,7 +95,7 @@ async function seedPartnerUsers(firmId: string) {
         },
         status: 'active',
         organization: {
-          type: 'ACCOUNTANT_FIRM',
+          type: PROBIZ_FIRM.type,
         },
       },
       data: {
@@ -140,21 +105,21 @@ async function seedPartnerUsers(firmId: string) {
   }
 }
 
-async function removeDemoFromActiveFirmAccess() {
-  const demo = await prisma.user.findUnique({
+async function disableDemoFirmAccess() {
+  const demoUser = await prisma.user.findUnique({
     where: {
       email: 'demo@pakbooks.ai',
     },
   });
 
-  if (!demo) return;
+  if (!demoUser) return;
 
   await prisma.organizationMember.updateMany({
     where: {
-      userId: demo.id,
+      userId: demoUser.id,
       status: 'active',
       organization: {
-        type: 'ACCOUNTANT_FIRM',
+        type: PROBIZ_FIRM.type,
       },
     },
     data: {
@@ -163,7 +128,7 @@ async function removeDemoFromActiveFirmAccess() {
   });
 }
 
-async function printSeedSummary(firmId: string) {
+async function printSummary(firmId: string) {
   const firm = await prisma.organization.findUnique({
     where: {
       id: firmId,
@@ -176,8 +141,8 @@ async function printSeedSummary(firmId: string) {
         include: {
           user: {
             select: {
-              email: true,
               name: true,
+              email: true,
             },
           },
         },
@@ -189,29 +154,34 @@ async function printSeedSummary(firmId: string) {
         where: {
           status: 'active',
         },
-        select: {
-          id: true,
-          name: true,
-        },
       },
     },
   });
 
-  console.log('Seed completed.');
+  console.log('Seed completed');
   console.log(`Firm: ${firm?.name}`);
   console.log(`Firm users: ${firm?.members.length}/${firm?.firmUserLimit}`);
-  console.log(
-    firm?.members.map((member) => `- ${member.user.email} (${member.role})`).join('\n'),
-  );
-  console.log(`Client companies: ${firm?.businesses.length}/${firm?.clientSlotLimit}`);
+  console.log(`Client slots: ${firm?.businesses.length}/${firm?.clientSlotLimit}`);
+
+  for (const member of firm?.members || []) {
+    const canGrantClientAccess = PROBIZ_PARTNERS.find(
+      (partner) => partner.email === member.user.email,
+    )?.canGrantClientAccess;
+
+    console.log(
+      `- ${member.user.email} | ${member.role} | client access admin: ${
+        canGrantClientAccess ? 'yes' : 'no'
+      }`,
+    );
+  }
 }
 
 async function main() {
-  const firm = await getOrCreateTargetFirm();
+  const firm = await getOrCreateProBizFirm();
 
-  await seedPartnerUsers(firm.id);
-  await removeDemoFromActiveFirmAccess();
-  await printSeedSummary(firm.id);
+  await seedPartnerAccess(firm.id);
+  await disableDemoFirmAccess();
+  await printSummary(firm.id);
 }
 
 main()
