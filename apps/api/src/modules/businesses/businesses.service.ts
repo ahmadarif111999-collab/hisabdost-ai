@@ -1,4 +1,9 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { AccountType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateBusinessDto } from './dto/create-business.dto';
@@ -12,61 +17,287 @@ export const DEFAULT_ACCOUNTS: Array<{
   description?: string;
   requiresReview?: boolean;
 }> = [
-  { code: '1000', name: 'Cash in Hand', type: 'ASSET', description: 'Physical cash held by the business.' },
-  { code: '1010', name: 'Bank Account', type: 'ASSET', description: 'Main bank account. Add named bank heads later if needed.' },
-  { code: '1020', name: 'JazzCash / Easypaisa / Wallet', type: 'ASSET', description: 'Digital wallet collections and payments.' },
-  { code: '1100', name: 'Accounts Receivable / Customers', type: 'ASSET', description: 'Amounts customers owe to the business.' },
-  { code: '1200', name: 'Inventory / Stock', type: 'ASSET', description: 'Stock value placeholder; full inventory module is future phase.' },
-  { code: '1300', name: 'Advance to Supplier', type: 'ASSET', description: 'Advance payments made to vendors.' },
-  { code: '1400', name: 'Security Deposit', type: 'ASSET', description: 'Rent or utility deposits.' },
-  { code: '1500', name: 'Office Equipment', type: 'ASSET' },
-  { code: '1600', name: 'Furniture & Fixtures', type: 'ASSET' },
-  { code: '1700', name: 'Input Sales Tax', type: 'ASSET', requiresReview: true },
-  { code: '1710', name: 'Withholding Tax Deducted', type: 'ASSET', requiresReview: true },
-  { code: '1720', name: 'Advance Income Tax', type: 'ASSET', requiresReview: true },
+  {
+    code: '1000',
+    name: 'Cash in Hand',
+    type: 'ASSET',
+    description: 'Physical cash held by the business.',
+  },
+  {
+    code: '1010',
+    name: 'Bank Account',
+    type: 'ASSET',
+    description: 'Main bank account. Add named bank heads later if needed.',
+  },
+  {
+    code: '1020',
+    name: 'JazzCash / Easypaisa / Wallet',
+    type: 'ASSET',
+    description: 'Digital wallet collections and payments.',
+  },
+  {
+    code: '1100',
+    name: 'Accounts Receivable / Customers',
+    type: 'ASSET',
+    description: 'Amounts customers owe to the business.',
+  },
+  {
+    code: '1200',
+    name: 'Inventory / Stock',
+    type: 'ASSET',
+    description: 'Stock value placeholder; full inventory module is future phase.',
+  },
+  {
+    code: '1300',
+    name: 'Advance to Supplier',
+    type: 'ASSET',
+    description: 'Advance payments made to vendors.',
+  },
+  {
+    code: '1400',
+    name: 'Security Deposit',
+    type: 'ASSET',
+    description: 'Rent or utility deposits.',
+  },
+  {
+    code: '1500',
+    name: 'Office Equipment',
+    type: 'ASSET',
+  },
+  {
+    code: '1600',
+    name: 'Furniture & Fixtures',
+    type: 'ASSET',
+  },
+  {
+    code: '1700',
+    name: 'Input Sales Tax',
+    type: 'ASSET',
+    requiresReview: true,
+  },
+  {
+    code: '1710',
+    name: 'Withholding Tax Deducted',
+    type: 'ASSET',
+    requiresReview: true,
+  },
+  {
+    code: '1720',
+    name: 'Advance Income Tax',
+    type: 'ASSET',
+    requiresReview: true,
+  },
 
-  { code: '2000', name: 'Accounts Payable / Suppliers', type: 'LIABILITY', description: 'Amounts owed to vendors/suppliers.' },
-  { code: '2100', name: 'Customer Advances', type: 'LIABILITY', description: 'Advance money received from customers.' },
-  { code: '2200', name: 'Sales Tax Payable', type: 'LIABILITY', requiresReview: true },
-  { code: '2210', name: 'Withholding Tax Payable', type: 'LIABILITY', requiresReview: true },
-  { code: '2220', name: 'Salary Payable', type: 'LIABILITY', requiresReview: true },
-  { code: '2300', name: 'Loan Payable', type: 'LIABILITY' },
+  {
+    code: '2000',
+    name: 'Accounts Payable / Suppliers',
+    type: 'LIABILITY',
+    description: 'Amounts owed to vendors/suppliers.',
+  },
+  {
+    code: '2100',
+    name: 'Customer Advances',
+    type: 'LIABILITY',
+    description: 'Advance money received from customers.',
+  },
+  {
+    code: '2200',
+    name: 'Sales Tax Payable',
+    type: 'LIABILITY',
+    requiresReview: true,
+  },
+  {
+    code: '2210',
+    name: 'Withholding Tax Payable',
+    type: 'LIABILITY',
+    requiresReview: true,
+  },
+  {
+    code: '2220',
+    name: 'Salary Payable',
+    type: 'LIABILITY',
+    requiresReview: true,
+  },
+  {
+    code: '2300',
+    name: 'Loan Payable',
+    type: 'LIABILITY',
+  },
 
-  { code: '3000', name: 'Owner Capital', type: 'EQUITY' },
-  { code: '3100', name: 'Owner Drawings', type: 'EQUITY', description: 'Cash or bank withdrawals by owner.' },
-  { code: '3200', name: 'Retained Earnings', type: 'EQUITY' },
+  {
+    code: '3000',
+    name: 'Owner Capital',
+    type: 'EQUITY',
+  },
+  {
+    code: '3100',
+    name: 'Owner Drawings',
+    type: 'EQUITY',
+    description: 'Cash or bank withdrawals by owner.',
+  },
+  {
+    code: '3200',
+    name: 'Retained Earnings',
+    type: 'EQUITY',
+  },
 
-  { code: '4000', name: 'Sales - Goods', type: 'INCOME' },
-  { code: '4100', name: 'Sales - Services', type: 'INCOME' },
-  { code: '4200', name: 'Commission Income', type: 'INCOME' },
-  { code: '4300', name: 'Other Income', type: 'INCOME' },
-  { code: '4900', name: 'Sales Returns / Discounts', type: 'INCOME' },
+  {
+    code: '4000',
+    name: 'Sales - Goods',
+    type: 'INCOME',
+  },
+  {
+    code: '4100',
+    name: 'Sales - Services',
+    type: 'INCOME',
+  },
+  {
+    code: '4200',
+    name: 'Commission Income',
+    type: 'INCOME',
+  },
+  {
+    code: '4300',
+    name: 'Other Income',
+    type: 'INCOME',
+  },
+  {
+    code: '4900',
+    name: 'Sales Returns / Discounts',
+    type: 'INCOME',
+  },
 
-  { code: '5000', name: 'Purchases', type: 'EXPENSE', description: 'Goods/stock bought for resale.' },
-  { code: '5010', name: 'Purchase Returns', type: 'EXPENSE' },
-  { code: '5020', name: 'Cost of Goods Sold', type: 'EXPENSE', description: 'Future inventory/closing-stock adjustments.' },
-  { code: '5030', name: 'Packaging Cost', type: 'EXPENSE' },
-  { code: '5040', name: 'Delivery / Rider Cost', type: 'EXPENSE' },
-  { code: '5100', name: 'Rent Expense', type: 'EXPENSE' },
-  { code: '5200', name: 'Salary Expense', type: 'EXPENSE', requiresReview: true },
-  { code: '5310', name: 'Electricity Expense', type: 'EXPENSE' },
-  { code: '5320', name: 'Gas Expense', type: 'EXPENSE' },
-  { code: '5330', name: 'Internet / Phone Expense', type: 'EXPENSE' },
-  { code: '5400', name: 'Transport Expense', type: 'EXPENSE' },
-  { code: '5410', name: 'Fuel Expense', type: 'EXPENSE' },
-  { code: '5500', name: 'Repair & Maintenance', type: 'EXPENSE' },
-  { code: '5600', name: 'Office Expense', type: 'EXPENSE' },
-  { code: '5610', name: 'Printing & Stationery', type: 'EXPENSE' },
-  { code: '5700', name: 'Marketing Expense', type: 'EXPENSE' },
-  { code: '5800', name: 'Software Subscription', type: 'EXPENSE' },
-  { code: '5900', name: 'Bank Charges', type: 'EXPENSE' },
-  { code: '6000', name: 'Professional Fee', type: 'EXPENSE' },
-  { code: '6010', name: 'Legal / Tax Consultant Fee', type: 'EXPENSE', requiresReview: true },
-  { code: '6100', name: 'Entertainment / Tea / Refreshment', type: 'EXPENSE' },
-  { code: '6200', name: 'Cleaning Expense', type: 'EXPENSE' },
-  { code: '6300', name: 'Donation / Charity', type: 'EXPENSE', requiresReview: true },
-  { code: '6400', name: 'Income Tax Paid', type: 'EXPENSE', requiresReview: true },
-  { code: '6999', name: 'Miscellaneous Expense', type: 'EXPENSE' },
+  {
+    code: '5000',
+    name: 'Purchases',
+    type: 'EXPENSE',
+    description: 'Goods/stock bought for resale.',
+  },
+  {
+    code: '5010',
+    name: 'Purchase Returns',
+    type: 'EXPENSE',
+  },
+  {
+    code: '5020',
+    name: 'Cost of Goods Sold',
+    type: 'EXPENSE',
+    description: 'Future inventory/closing-stock adjustments.',
+  },
+  {
+    code: '5030',
+    name: 'Packaging Cost',
+    type: 'EXPENSE',
+  },
+  {
+    code: '5040',
+    name: 'Delivery / Rider Cost',
+    type: 'EXPENSE',
+  },
+  {
+    code: '5100',
+    name: 'Rent Expense',
+    type: 'EXPENSE',
+  },
+  {
+    code: '5200',
+    name: 'Salary Expense',
+    type: 'EXPENSE',
+    requiresReview: true,
+  },
+  {
+    code: '5310',
+    name: 'Electricity Expense',
+    type: 'EXPENSE',
+  },
+  {
+    code: '5320',
+    name: 'Gas Expense',
+    type: 'EXPENSE',
+  },
+  {
+    code: '5330',
+    name: 'Internet / Phone Expense',
+    type: 'EXPENSE',
+  },
+  {
+    code: '5400',
+    name: 'Transport Expense',
+    type: 'EXPENSE',
+  },
+  {
+    code: '5410',
+    name: 'Fuel Expense',
+    type: 'EXPENSE',
+  },
+  {
+    code: '5500',
+    name: 'Repair & Maintenance',
+    type: 'EXPENSE',
+  },
+  {
+    code: '5600',
+    name: 'Office Expense',
+    type: 'EXPENSE',
+  },
+  {
+    code: '5610',
+    name: 'Printing & Stationery',
+    type: 'EXPENSE',
+  },
+  {
+    code: '5700',
+    name: 'Marketing Expense',
+    type: 'EXPENSE',
+  },
+  {
+    code: '5800',
+    name: 'Software Subscription',
+    type: 'EXPENSE',
+  },
+  {
+    code: '5900',
+    name: 'Bank Charges',
+    type: 'EXPENSE',
+  },
+  {
+    code: '6000',
+    name: 'Professional Fee',
+    type: 'EXPENSE',
+  },
+  {
+    code: '6010',
+    name: 'Legal / Tax Consultant Fee',
+    type: 'EXPENSE',
+    requiresReview: true,
+  },
+  {
+    code: '6100',
+    name: 'Entertainment / Tea / Refreshment',
+    type: 'EXPENSE',
+  },
+  {
+    code: '6200',
+    name: 'Cleaning Expense',
+    type: 'EXPENSE',
+  },
+  {
+    code: '6300',
+    name: 'Donation / Charity',
+    type: 'EXPENSE',
+    requiresReview: true,
+  },
+  {
+    code: '6400',
+    name: 'Income Tax Paid',
+    type: 'EXPENSE',
+    requiresReview: true,
+  },
+  {
+    code: '6999',
+    name: 'Miscellaneous Expense',
+    type: 'EXPENSE',
+  },
 ];
 
 @Injectable()
@@ -129,7 +360,9 @@ export class BusinessesService {
     const firmMembership = await this.getFirmMembership(userId);
 
     if (!firmMembership) {
-      throw new ForbiddenException('Only firm users can add client companies in this version.');
+      throw new ForbiddenException(
+        'Only firm users can add client companies in this version.',
+      );
     }
 
     return this.createClientBusiness(userId, dto);
@@ -170,7 +403,10 @@ export class BusinessesService {
         isSecpRegistered: dto.isSecpRegistered || false,
         accounts: {
           create: DEFAULT_ACCOUNTS.map((account) => ({
-            ...account,
+            code: account.code,
+            name: account.name,
+            type: account.type,
+            description: account.description,
             isSystem: true,
             requiresReview: account.requiresReview || false,
           })),
@@ -180,7 +416,11 @@ export class BusinessesService {
             {
               title: 'Monthly bookkeeping close',
               authority: 'Internal',
-              dueDate: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 5),
+              dueDate: new Date(
+                new Date().getFullYear(),
+                new Date().getMonth() + 1,
+                5,
+              ),
               notes:
                 'Review sales, purchases, expenses, receipts, receivables, payables, and send to accountant.',
             },
@@ -213,7 +453,12 @@ export class BusinessesService {
     return business;
   }
 
-  async inviteClientUser(userId: string, businessId: string, email: string, role = 'CLIENT_OWNER') {
+  async inviteClientUser(
+    userId: string,
+    businessId: string,
+    email: string,
+    role = 'CLIENT_OWNER',
+  ) {
     await this.getAccessibleBusiness(userId, businessId);
 
     const user = await this.prisma.user.findUnique({
@@ -223,7 +468,9 @@ export class BusinessesService {
     });
 
     if (!user) {
-      throw new NotFoundException('User must register before they can be invited as a client user.');
+      throw new NotFoundException(
+        'User must register before they can be invited as a client user.',
+      );
     }
 
     return this.prisma.businessMember.upsert({
@@ -381,12 +628,18 @@ export class BusinessesService {
     }
 
     return (
-      memberships.find((membership) => membership.organization.name === SHARED_FIRM_NAME) ??
-      memberships.find((membership) => membership.organization.name === 'HisabDost Accounting Firm') ??
+      memberships.find(
+        (membership) => membership.organization.name === SHARED_FIRM_NAME,
+      ) ??
+      memberships.find(
+        (membership) =>
+          membership.organization.name === 'HisabDost Accounting Firm',
+      ) ??
       memberships[0]
     );
   }
-    async ensureFirmAccountLibrary(organizationId: string) {
+
+  async ensureFirmAccountLibrary(organizationId: string) {
     return DEFAULT_ACCOUNTS.map((account) => ({
       id: account.code,
       organizationId,
@@ -416,11 +669,18 @@ export class BusinessesService {
       throw new ForbiddenException('Firm access required');
     }
 
+    const clientMembership =
+      business.members.find(
+        (member) => member.userId === userId && member.status === 'active',
+      ) ?? null;
+
     return {
       business,
       firmMembership,
+      clientMembership,
     };
   }
+
   async copyFirmAccountsToClient(organizationId: string, businessId: string) {
     await this.ensureFirmAccountLibrary(organizationId);
 
