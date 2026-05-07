@@ -1,13 +1,54 @@
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
-import {
-  PROBIZ_FIRM,
-  PROBIZ_PARTNER_PASSWORD,
-  PROBIZ_PARTNERS,
-  normalizeEmail,
-} from '../src/config/probiz-beta.config';
 
 const prisma = new PrismaClient();
+
+const PROBIZ_FIRM = {
+  name: 'ProBiz Consultants',
+  type: 'ACCOUNTANT_FIRM' as const,
+  planName: 'Partner Beta',
+  clientSlotLimit: 10,
+  firmUserLimit: 5,
+};
+
+const PROBIZ_PARTNER_PASSWORD = 'Probiz01';
+
+const PROBIZ_PARTNERS = [
+  {
+    name: 'Ahmad Arif',
+    email: 'ahmadarif111999@gmail.com',
+    role: 'FIRM_PARTNER' as const,
+    canGrantClientAccess: true,
+  },
+  {
+    name: 'Yasir Javaid',
+    email: 'yjavaid01@gmail.com',
+    role: 'FIRM_PARTNER' as const,
+    canGrantClientAccess: false,
+  },
+  {
+    name: 'Maysum Zaidi',
+    email: 'maysumzaidi2001@gmail.com',
+    role: 'FIRM_PARTNER' as const,
+    canGrantClientAccess: false,
+  },
+  {
+    name: 'Asfand Sajjad',
+    email: 'asfandsajjid@gmail.com',
+    role: 'FIRM_PARTNER' as const,
+    canGrantClientAccess: false,
+  },
+  {
+    name: 'Ali Awan',
+    email: 'ali.awan9167@gmail.com',
+    role: 'FIRM_PARTNER' as const,
+    canGrantClientAccess: false,
+  },
+];
+
+function normalizeEmail(email: string) {
+  return email.toLowerCase().trim();
+}
 
 async function getOrCreateProBizFirm() {
   const existingFirm = await prisma.organization.findFirst({
@@ -59,6 +100,7 @@ async function seedPartnerAccess(firmId: string) {
       update: {
         name: partner.name,
         passwordHash,
+        preferredLanguage: 'roman_urdu',
       },
       create: {
         name: partner.name,
@@ -87,6 +129,13 @@ async function seedPartnerAccess(firmId: string) {
       },
     });
 
+    /**
+     * Disable old accidental personal firm memberships like:
+     * "Ahmed's Accounting Firm"
+     *
+     * We do not delete the old organizations yet.
+     * We just stop the backend from selecting them as active firm access.
+     */
     await prisma.organizationMember.updateMany({
       where: {
         userId: user.id,
@@ -154,6 +203,10 @@ async function printSummary(firmId: string) {
         where: {
           status: 'active',
         },
+        select: {
+          id: true,
+          name: true,
+        },
       },
     },
   });
@@ -164,13 +217,13 @@ async function printSummary(firmId: string) {
   console.log(`Client slots: ${firm?.businesses.length}/${firm?.clientSlotLimit}`);
 
   for (const member of firm?.members || []) {
-    const canGrantClientAccess = PROBIZ_PARTNERS.find(
-      (partner) => partner.email === member.user.email,
-    )?.canGrantClientAccess;
+    const partner = PROBIZ_PARTNERS.find(
+      (item) => item.email === normalizeEmail(member.user.email),
+    );
 
     console.log(
       `- ${member.user.email} | ${member.role} | client access admin: ${
-        canGrantClientAccess ? 'yes' : 'no'
+        partner?.canGrantClientAccess ? 'yes' : 'no'
       }`,
     );
   }
