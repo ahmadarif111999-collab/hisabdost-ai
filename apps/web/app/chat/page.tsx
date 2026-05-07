@@ -35,7 +35,7 @@ export default function ChatPage() {
       if (action.type === 'create_invoice' && action.amount) {
         await api(`/invoices/businesses/${businessId}`, {
           method: 'POST',
-          body: JSON.stringify({ customerName: action.customerName, invoiceDate: action.date, notes: action.description, items: [{ description: action.category || 'Service', quantity: 1, unitPrice: action.amount }] }),
+          body: JSON.stringify({ customerName: action.customerName, invoiceDate: new Date().toISOString().slice(0, 10), notes: action.description, items: [{ description: action.category || 'Service', quantity: 1, unitPrice: action.amount }] }),
         });
       }
     }
