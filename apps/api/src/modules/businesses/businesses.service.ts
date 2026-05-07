@@ -3,7 +3,15 @@ import { AccountType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateBusinessDto } from './dto/create-business.dto';
 
-export const DEFAULT_ACCOUNTS: Array<{ code: string; name: string; type: AccountType; description?: string; requiresReview?: boolean; category?: string }> = [
+const SHARED_FIRM_NAME = 'ProBiz AI Firm';
+
+export const DEFAULT_ACCOUNTS: Array<{
+  code: string;
+  name: string;
+  type: AccountType;
+  description?: string;
+  requiresReview?: boolean;
+}> = [
   { code: '1000', name: 'Cash in Hand', type: 'ASSET', description: 'Physical cash held by the business.' },
   { code: '1010', name: 'Bank Account', type: 'ASSET', description: 'Main bank account. Add named bank heads later if needed.' },
   { code: '1020', name: 'JazzCash / Easypaisa / Wallet', type: 'ASSET', description: 'Digital wallet collections and payments.' },
@@ -68,91 +76,83 @@ export class BusinessesService {
   async list(userId: string) {
     return this.prisma.business.findMany({
       where: {
-        OR: [
-          { organization: { members: { some: { userId, status: 'active' } } } },
-          { members: { some: { userId, status: 'active' } } },
-        ],
         status: 'active',
+        OR: [
+          {
+            organization: {
+              members: {
+                some: {
+                  userId,
+                  status: 'active',
+                },
+              },
+            },
+          },
+          {
+            members: {
+              some: {
+                userId,
+                status: 'active',
+              },
+            },
+          },
+        ],
       },
       include: {
-        organization: { select: { id: true, name: true, type: true, clientSlotLimit: true } },
-        members: { include: { user: { select: { id: true, name: true, email: true } } } },
+        organization: {
+          select: {
+            id: true,
+            name: true,
+            type: true,
+            clientSlotLimit: true,
+          },
+        },
+        members: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+              },
+            },
+          },
+        },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: {
+        createdAt: 'desc',
+      },
     });
   }
 
   async create(userId: string, dto: CreateBusinessDto) {
     const firmMembership = await this.getFirmMembership(userId);
-    if (!firmMembership) throw new ForbiddenException('Only firm users can add client companies in this version.');
+
+    if (!firmMembership) {
+      throw new ForbiddenException('Only firm users can add client companies in this version.');
+    }
+
     return this.createClientBusiness(userId, dto);
   }
 
-  async ensureFirmAccountLibrary(organizationId: string) {
-    const count = await this.prisma.accountTemplate.count({ where: { organizationId } });
-    if (count > 0) return;
-
-    await this.prisma.accountTemplate.createMany({
-      data: DEFAULT_ACCOUNTS.map((account, index) => ({
-        organizationId,
-        code: account.code,
-        name: account.name,
-        type: account.type,
-        description: account.description,
-        category: account.category,
-        isTaxSensitive: account.requiresReview || account.name.toLowerCase().includes('tax') || account.name.toLowerCase().includes('withholding'),
-        sortOrder: index,
-      })),
-      skipDuplicates: true,
-    });
-  }
-
-  async getFirmAccountLibrary(userId: string) {
-    const membership = await this.ensureFirmUser(userId);
-    await this.ensureFirmAccountLibrary(membership.organizationId);
-    return this.prisma.accountTemplate.findMany({
-      where: { organizationId: membership.organizationId, isActive: true },
-      orderBy: [{ sortOrder: 'asc' }, { code: 'asc' }],
-    });
-  }
-
-  async copyFirmAccountsToClient(organizationId: string, businessId: string) {
-    await this.ensureFirmAccountLibrary(organizationId);
-    const templates = await this.prisma.accountTemplate.findMany({
-      where: { organizationId, isActive: true },
-      orderBy: [{ sortOrder: 'asc' }, { code: 'asc' }],
-    });
-
-    const created: any[] = [];
-    for (const template of templates) {
-      const account = await this.prisma.account.upsert({
-        where: { businessId_code: { businessId, code: template.code } },
-        update: {},
-        create: {
-          businessId,
-          code: template.code,
-          name: template.name,
-          type: template.type,
-          description: template.description,
-          isSystem: true,
-          requiresReview: template.isTaxSensitive,
-        },
-      });
-      created.push(account);
-    }
-    return created;
-  }
-
   async createClientBusiness(userId: string, dto: CreateBusinessDto) {
-
     const membership = await this.getFirmMembership(userId);
-    if (!membership) throw new ForbiddenException('No firm organization found for user');
+
+    if (!membership) {
+      throw new ForbiddenException('No firm organization found for user');
+    }
 
     const clientCount = await this.prisma.business.count({
-      where: { organizationId: membership.organizationId, status: 'active' },
+      where: {
+        organizationId: membership.organizationId,
+        status: 'active',
+      },
     });
+
     if (clientCount >= membership.organization.clientSlotLimit) {
-      throw new BadRequestException(`Client slot limit reached (${clientCount}/${membership.organization.clientSlotLimit}). Upgrade plan to add more clients.`);
+      throw new BadRequestException(
+        `Client slot limit reached (${clientCount}/${membership.organization.clientSlotLimit}). Upgrade plan to add more clients.`,
+      );
     }
 
     const business = await this.prisma.business.create({
@@ -168,15 +168,12 @@ export class BusinessesService {
         isSalesTaxRegistered: dto.isSalesTaxRegistered || false,
         isWithholdingAgent: dto.isWithholdingAgent || false,
         isSecpRegistered: dto.isSecpRegistered || false,
-        reportPermission: {
-          create: {
-            allowClientOwnerViewReports: true,
-            allowClientOwnerGenerateReports: false,
-            allowClientOwnerExportReports: false,
-            allowClientManagerViewReports: true,
-            allowClientManagerGenerateReports: true,
-            allowClientManagerExportReports: false,
-          },
+        accounts: {
+          create: DEFAULT_ACCOUNTS.map((account) => ({
+            ...account,
+            isSystem: true,
+            requiresReview: account.requiresReview || false,
+          })),
         },
         complianceEvents: {
           create: [
@@ -184,15 +181,18 @@ export class BusinessesService {
               title: 'Monthly bookkeeping close',
               authority: 'Internal',
               dueDate: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 5),
-              notes: 'Review sales, purchases, expenses, receipts, receivables, payables, and send to accountant.',
+              notes:
+                'Review sales, purchases, expenses, receipts, receivables, payables, and send to accountant.',
             },
           ],
         },
       },
-      include: { accounts: true, complianceEvents: true, organization: true },
+      include: {
+        accounts: true,
+        complianceEvents: true,
+        organization: true,
+      },
     });
-
-    await this.copyFirmAccountsToClient(membership.organizationId, business.id);
 
     await this.prisma.auditLog.create({
       data: {
@@ -202,7 +202,11 @@ export class BusinessesService {
         action: 'CLIENT_BUSINESS_CREATED',
         entityType: 'Business',
         entityId: business.id,
-        afterJson: { name: business.name, slot: clientCount + 1, limit: membership.organization.clientSlotLimit },
+        afterJson: {
+          name: business.name,
+          slot: clientCount + 1,
+          limit: membership.organization.clientSlotLimit,
+        },
       },
     });
 
@@ -211,14 +215,44 @@ export class BusinessesService {
 
   async inviteClientUser(userId: string, businessId: string, email: string, role = 'CLIENT_OWNER') {
     await this.getAccessibleBusiness(userId, businessId);
-    const user = await this.prisma.user.findUnique({ where: { email: email.toLowerCase() } });
-    if (!user) throw new NotFoundException('User must register before they can be invited as a client user.');
+
+    const user = await this.prisma.user.findUnique({
+      where: {
+        email: email.toLowerCase().trim(),
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User must register before they can be invited as a client user.');
+    }
 
     return this.prisma.businessMember.upsert({
-      where: { businessId_userId: { businessId, userId: user.id } },
-      update: { role, status: 'active' },
-      create: { businessId, userId: user.id, role, status: 'active' },
-      include: { user: { select: { id: true, name: true, email: true, phone: true } } },
+      where: {
+        businessId_userId: {
+          businessId,
+          userId: user.id,
+        },
+      },
+      update: {
+        role,
+        status: 'active',
+      },
+      create: {
+        businessId,
+        userId: user.id,
+        role,
+        status: 'active',
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+          },
+        },
+      },
     });
   }
 
@@ -228,66 +262,128 @@ export class BusinessesService {
         id: businessId,
         status: 'active',
         OR: [
-          { organization: { members: { some: { userId, status: 'active' } } } },
-          { members: { some: { userId, status: 'active' } } },
+          {
+            organization: {
+              members: {
+                some: {
+                  userId,
+                  status: 'active',
+                },
+              },
+            },
+          },
+          {
+            members: {
+              some: {
+                userId,
+                status: 'active',
+              },
+            },
+          },
         ],
       },
-      include: { accounts: true, organization: true, members: true },
+      include: {
+        accounts: true,
+        organization: true,
+        members: true,
+      },
     });
-    if (!business) throw new NotFoundException('Business not found or not accessible');
+
+    if (!business) {
+      throw new NotFoundException('Business not found or not accessible');
+    }
+
     return business;
   }
 
   async ensureFirmUser(userId: string) {
     const membership = await this.getFirmMembership(userId);
-    if (!membership) throw new ForbiddenException('Firm access required');
+
+    if (!membership) {
+      throw new ForbiddenException('Firm access required');
+    }
+
     return membership;
   }
 
-  async getFirmMembership(userId: string) {
-    return this.prisma.organizationMember.findFirst({
-      where: { userId, status: 'active', organization: { type: 'ACCOUNTANT_FIRM' } },
-      include: { organization: true },
-      orderBy: { createdAt: 'asc' },
-    });
-  }
-
-  async getUserAccessForBusiness(userId: string, businessId: string) {
-    const business = await this.getAccessibleBusiness(userId, businessId);
-    const firmMembership = await this.prisma.organizationMember.findFirst({
-      where: { userId, organizationId: business.organizationId, status: 'active' },
-      include: { organization: true },
-    });
-    const clientMembership = await this.prisma.businessMember.findFirst({ where: { userId, businessId, status: 'active' } });
-    return { business, firmMembership, clientMembership };
-  }
-
-  isFirmRole(role?: string | null) {
-    return ['FIRM_OWNER', 'FIRM_PARTNER', 'FIRM_MANAGER', 'FIRM_ACCOUNTANT', 'SUPER_ADMIN', 'OWNER', 'ADMIN', 'ACCOUNTANT'].includes(role || '');
-  }
-  async getFirmMembership(userId: string) {
-  const memberships = await this.prisma.organizationMember.findMany({
-    where: {
-      userId,
-      status: 'active',
-      organization: {
-        type: 'ACCOUNTANT_FIRM',
+  async isFirmUserForBusiness(userId: string, businessId: string) {
+    const business = await this.prisma.business.findFirst({
+      where: {
+        id: businessId,
+        status: 'active',
+        organization: {
+          members: {
+            some: {
+              userId,
+              status: 'active',
+            },
+          },
+        },
       },
-    },
-    include: {
-      organization: true,
-    },
-    orderBy: {
-      createdAt: 'desc',
-    },
-  });
+      select: {
+        id: true,
+      },
+    });
 
-  if (!memberships.length) return null;
+    return Boolean(business);
+  }
 
-  return (
-    memberships.find((membership) => membership.organization.name === 'ProBiz AI Firm') ??
-    memberships.find((membership) => membership.organization.name === 'HisabDost Accounting Firm') ??
-    memberships.find((membership) => membership.organization.firmUserLimit === 5) ??
-    memberships[0]
-  );
+  async getFirmMembershipForBusiness(userId: string, businessId: string) {
+    const business = await this.prisma.business.findFirst({
+      where: {
+        id: businessId,
+        status: 'active',
+        organization: {
+          members: {
+            some: {
+              userId,
+              status: 'active',
+            },
+          },
+        },
+      },
+      include: {
+        organization: {
+          include: {
+            members: {
+              where: {
+                userId,
+                status: 'active',
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return business?.organization.members[0] ?? null;
+  }
+
+  async getFirmMembership(userId: string) {
+    const memberships = await this.prisma.organizationMember.findMany({
+      where: {
+        userId,
+        status: 'active',
+        organization: {
+          type: 'ACCOUNTANT_FIRM',
+        },
+      },
+      include: {
+        organization: true,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    if (!memberships.length) {
+      return null;
+    }
+
+    return (
+      memberships.find((membership) => membership.organization.name === SHARED_FIRM_NAME) ??
+      memberships.find((membership) => membership.organization.name === 'HisabDost Accounting Firm') ??
+      memberships[0]
+    );
+  }
 }
