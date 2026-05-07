@@ -386,4 +386,75 @@ export class BusinessesService {
       memberships[0]
     );
   }
+    async ensureFirmAccountLibrary(organizationId: string) {
+    return DEFAULT_ACCOUNTS.map((account) => ({
+      id: account.code,
+      organizationId,
+      code: account.code,
+      name: account.name,
+      type: account.type,
+      description: account.description ?? null,
+      isSystem: true,
+      requiresReview: account.requiresReview ?? false,
+    }));
+  }
+
+  async getFirmAccountLibrary(userId: string) {
+    const membership = await this.ensureFirmUser(userId);
+
+    return this.ensureFirmAccountLibrary(membership.organizationId);
+  }
+
+  async getUserAccessForBusiness(userId: string, businessId: string) {
+    const business = await this.getAccessibleBusiness(userId, businessId);
+
+    const firmMembership =
+      (await this.getFirmMembershipForBusiness(userId, businessId)) ??
+      (await this.getFirmMembership(userId));
+
+    if (!firmMembership) {
+      throw new ForbiddenException('Firm access required');
+    }
+
+    return {
+      business,
+      firmMembership,
+    };
+  }
+  async copyFirmAccountsToClient(organizationId: string, businessId: string) {
+    await this.ensureFirmAccountLibrary(organizationId);
+
+    const existingAccounts = await this.prisma.account.findMany({
+      where: {
+        businessId,
+      },
+      orderBy: {
+        code: 'asc',
+      },
+    });
+
+    if (existingAccounts.length) {
+      return existingAccounts;
+    }
+
+    const createdAccounts = [];
+
+    for (const account of DEFAULT_ACCOUNTS) {
+      const created = await this.prisma.account.create({
+        data: {
+          businessId,
+          code: account.code,
+          name: account.name,
+          type: account.type,
+          description: account.description,
+          isSystem: true,
+          requiresReview: account.requiresReview ?? false,
+        },
+      });
+
+      createdAccounts.push(created);
+    }
+
+    return createdAccounts;
+  }
 }
