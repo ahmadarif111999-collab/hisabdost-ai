@@ -265,10 +265,29 @@ export class BusinessesService {
   isFirmRole(role?: string | null) {
     return ['FIRM_OWNER', 'FIRM_PARTNER', 'FIRM_MANAGER', 'FIRM_ACCOUNTANT', 'SUPER_ADMIN', 'OWNER', 'ADMIN', 'ACCOUNTANT'].includes(role || '');
   }
+  async getFirmMembership(userId: string) {
+  const memberships = await this.prisma.organizationMember.findMany({
+    where: {
+      userId,
+      status: 'active',
+      organization: {
+        type: 'ACCOUNTANT_FIRM',
+      },
+    },
+    include: {
+      organization: true,
+    },
+    orderBy: {
+      createdAt: 'desc',
+    },
+  });
 
-  async isFirmUserForBusiness(userId: string, businessId: string) {
-    const { firmMembership } = await this.getUserAccessForBusiness(userId, businessId);
-    return !!firmMembership && this.isFirmRole(firmMembership.role);
-  }
+  if (!memberships.length) return null;
+
+  return (
+    memberships.find((membership) => membership.organization.name === 'ProBiz AI Firm') ??
+    memberships.find((membership) => membership.organization.name === 'HisabDost Accounting Firm') ??
+    memberships.find((membership) => membership.organization.firmUserLimit === 5) ??
+    memberships[0]
+  );
 }
-
