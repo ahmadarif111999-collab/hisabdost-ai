@@ -3,13 +3,8 @@ import * as bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
 
-const firmName = 'ProBiz AI Firm';
-
-const ownerUser = {
-  name: 'Firm Owner',
-  email: 'demo@pakbooks.ai',
-  password: 'password123',
-};
+const FIRM_NAME = 'ProBiz AI Firm';
+const PARTNER_PASSWORD = 'Probiz01';
 
 const partnerUsers = [
   {
@@ -35,128 +30,46 @@ const partnerUsers = [
 ];
 
 async function main() {
-  const ownerPasswordHash = await bcrypt.hash(ownerUser.password, 10);
-  const partnerPasswordHash = await bcrypt.hash('Probiz01', 10);
+  const passwordHash = await bcrypt.hash(PARTNER_PASSWORD, 10);
 
-  const owner = await prisma.user.upsert({
-    where: {
-      email: ownerUser.email.toLowerCase(),
-    },
-    update: {
-      name: ownerUser.name,
-      passwordHash: ownerPasswordHash,
-    },
-    create: {
-      name: ownerUser.name,
-      email: ownerUser.email.toLowerCase(),
-      phone: '+923001234567',
-      passwordHash: ownerPasswordHash,
-    },
-  });
-
-  const firstPartner = await prisma.user.upsert({
-    where: {
-      email: partnerUsers[0].email.toLowerCase(),
-    },
-    update: {
-      name: partnerUsers[0].name,
-      passwordHash: partnerPasswordHash,
-    },
-    create: {
-      name: partnerUsers[0].name,
-      email: partnerUsers[0].email.toLowerCase(),
-      passwordHash: partnerPasswordHash,
-    },
-  });
-
-  const existingPartnerFirmMembership =
-    await prisma.organizationMember.findFirst({
+  const existingFirm =
+    (await prisma.organization.findFirst({
       where: {
-        userId: firstPartner.id,
-        organization: {
-          type: 'ACCOUNTANT_FIRM',
-        },
-      },
-      include: {
-        organization: true,
-      },
-    });
-
-  const existingOwnerFirmMembership =
-    await prisma.organizationMember.findFirst({
-      where: {
-        userId: owner.id,
-        organization: {
-          type: 'ACCOUNTANT_FIRM',
-        },
-      },
-      include: {
-        organization: true,
-      },
-    });
-
-  const existingNamedFirm = await prisma.organization.findFirst({
-    where: {
-      name: firmName,
-      type: 'ACCOUNTANT_FIRM',
-    },
-  });
-
-  const firmRecord =
-    existingPartnerFirmMembership?.organization ??
-    existingOwnerFirmMembership?.organization ??
-    existingNamedFirm ??
-    (await prisma.organization.create({
-      data: {
-        name: firmName,
+        name: FIRM_NAME,
         type: 'ACCOUNTANT_FIRM',
-        planName: 'Firm Starter',
-        clientSlotLimit: 10,
-        firmUserLimit: 10,
+      },
+    })) ??
+    (await prisma.organization.findFirst({
+      where: {
+        type: 'ACCOUNTANT_FIRM',
+      },
+      orderBy: {
+        createdAt: 'asc',
       },
     }));
 
-  const firm = await prisma.organization.update({
+  const firm =
+    existingFirm ??
+    (await prisma.organization.create({
+      data: {
+        name: FIRM_NAME,
+        type: 'ACCOUNTANT_FIRM',
+        planName: 'Partner Beta',
+        clientSlotLimit: 10,
+        firmUserLimit: 5,
+      },
+    }));
+
+  const updatedFirm = await prisma.organization.update({
     where: {
-      id: firmRecord.id,
+      id: firm.id,
     },
     data: {
-      name: firmName,
+      name: FIRM_NAME,
       type: 'ACCOUNTANT_FIRM',
-      planName: 'Firm Starter',
+      planName: 'Partner Beta',
       clientSlotLimit: 10,
-      firmUserLimit: 10,
-    },
-  });
-
-  await prisma.organizationMember.deleteMany({
-    where: {
-      userId: owner.id,
-      organizationId: {
-        not: firm.id,
-      },
-      organization: {
-        type: 'ACCOUNTANT_FIRM',
-      },
-    },
-  });
-
-  await prisma.organizationMember.upsert({
-    where: {
-      organizationId_userId: {
-        organizationId: firm.id,
-        userId: owner.id,
-      },
-    },
-    update: {
-      role: 'FIRM_OWNER',
-      status: 'active',
-    },
-    create: {
-      organizationId: firm.id,
-      userId: owner.id,
-      role: 'FIRM_OWNER',
-      status: 'active',
+      firmUserLimit: 5,
     },
   });
 
@@ -167,31 +80,34 @@ async function main() {
       },
       update: {
         name: partner.name,
-        passwordHash: partnerPasswordHash,
+        passwordHash,
       },
       create: {
         name: partner.name,
         email: partner.email.toLowerCase(),
-        passwordHash: partnerPasswordHash,
+        passwordHash,
       },
     });
 
-    await prisma.organizationMember.deleteMany({
+    await prisma.organizationMember.updateMany({
       where: {
         userId: user.id,
         organizationId: {
-          not: firm.id,
+          not: updatedFirm.id,
         },
         organization: {
           type: 'ACCOUNTANT_FIRM',
         },
+      },
+      data: {
+        status: 'inactive',
       },
     });
 
     await prisma.organizationMember.upsert({
       where: {
         organizationId_userId: {
-          organizationId: firm.id,
+          organizationId: updatedFirm.id,
           userId: user.id,
         },
       },
@@ -200,7 +116,7 @@ async function main() {
         status: 'active',
       },
       create: {
-        organizationId: firm.id,
+        organizationId: updatedFirm.id,
         userId: user.id,
         role: 'FIRM_PARTNER',
         status: 'active',
@@ -208,14 +124,33 @@ async function main() {
     });
   }
 
-  console.log('Firm users connected successfully');
+  const demoUser = await prisma.user.findUnique({
+    where: {
+      email: 'demo@pakbooks.ai',
+    },
+  });
+
+  if (demoUser) {
+    await prisma.organizationMember.updateMany({
+      where: {
+        userId: demoUser.id,
+        organization: {
+          type: 'ACCOUNTANT_FIRM',
+        },
+      },
+      data: {
+        status: 'inactive',
+      },
+    });
+  }
+
+  console.log('Seed complete');
   console.log({
-    firm: firm.name,
-    firmUserLimit: firm.firmUserLimit,
-    owner: owner.email,
-    partnerPassword: 'Probiz01',
+    firm: updatedFirm.name,
+    firmUserLimit: updatedFirm.firmUserLimit,
+    expectedFirmUsers: partnerUsers.length,
+    partnerPassword: PARTNER_PASSWORD,
     partners: partnerUsers.map((partner) => partner.email),
-    expectedFirmUserCount: 6,
   });
 }
 
