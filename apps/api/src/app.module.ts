@@ -10,6 +10,7 @@ import { ComplianceModule } from './modules/compliance/compliance.module';
 import { DocumentsModule } from './modules/documents/documents.module';
 import { AccountantsModule } from './modules/accountants/accountants.module';
 import { FirmModule } from './modules/firm/firm.module';
+import { PeriodsModule } from './modules/periods/periods.module';
 import { HealthController } from './health.controller';
 
 @Module({
@@ -25,6 +26,7 @@ import { HealthController } from './health.controller';
     DocumentsModule,
     AccountantsModule,
     FirmModule,
+    PeriodsModule,
   ],
   controllers: [HealthController],
 })
