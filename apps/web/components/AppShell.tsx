@@ -34,6 +34,7 @@ const navGroups = [
     title: 'Client Books',
     items: [
       ['Dashboard', '/dashboard'],
+      ['Periods', '/periods'],
       ['Transactions', '/transactions'],
       ['Cash & Bank', '/cash-bank'],
       ['Accounts', '/accounts'],
@@ -58,6 +59,7 @@ const pageLabels: Record<string, string> = {
   '/firm': 'Firm Dashboard',
   '/account-library': 'Account Library',
   '/dashboard': 'Client Dashboard',
+  '/periods': 'Accounting Periods',
   '/transactions': 'Transactions',
   '/cash-bank': 'Cash & Bank',
   '/accounts': 'Accounts',
