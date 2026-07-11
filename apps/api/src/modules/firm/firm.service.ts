@@ -21,11 +21,6 @@ export class FirmService {
   async dashboard(userId: string) {
     const membership = await this.businesses.ensureFirmUser(userId);
 
-    /**
-     * FIX:
-     * This method expects userId, not organizationId.
-     * Passing membership.organizationId causes firm access lookup to fail.
-     */
     await this.businesses.ensureFirmAccountLibrary(userId);
 
     const [
@@ -165,7 +160,7 @@ export class FirmService {
     if (dto.clientOwnerEmail) {
       const user = await this.prisma.user.findUnique({
         where: {
-          email: dto.clientOwnerEmail.toLowerCase(),
+          email: dto.clientOwnerEmail.toLowerCase().trim(),
         },
       });
 
@@ -194,12 +189,16 @@ export class FirmService {
     return business;
   }
 
+  async archiveClient(userId: string, businessId: string) {
+    return this.businesses.archiveClientBusiness(userId, businessId);
+  }
+
   async inviteFirmMember(userId: string, dto: InviteFirmMemberDto) {
     const membership = await this.businesses.ensureFirmUser(userId);
 
     const target = await this.prisma.user.findUnique({
       where: {
-        email: dto.email.toLowerCase(),
+        email: dto.email.toLowerCase().trim(),
       },
     });
 
@@ -266,10 +265,6 @@ export class FirmService {
   async createAccountTemplate(userId: string, dto: CreateAccountTemplateDto) {
     const membership = await this.businesses.ensureFirmUser(userId);
 
-    /**
-     * FIX:
-     * This method expects userId, not organizationId.
-     */
     await this.businesses.ensureFirmAccountLibrary(userId);
 
     const template = await this.prisma.accountTemplate.upsert({
@@ -326,10 +321,6 @@ export class FirmService {
       throw new BadRequestException('Firm access required to import default accounts.');
     }
 
-    /**
-     * FIX:
-     * copyFirmAccountsToClient expects userId, not organizationId.
-     */
     const accounts = await this.businesses.copyFirmAccountsToClient(userId, businessId);
 
     await this.prisma.auditLog.create({
