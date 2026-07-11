@@ -2,6 +2,15 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { AccountType } from '@prisma/client';
 import { BusinessesService } from '../businesses/businesses.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  cleanAccountingNarration,
+  displayJournalEntryNo,
+  displayUserName,
+  formatPakistanDate,
+  formatPakistanDateTime,
+  normalBalanceLabel,
+  sourceTypeLabel,
+} from '../../common/accounting-format.util';
 
 type DateFilter = {
   from?: string;
@@ -46,27 +55,30 @@ export class AccountingViewsService {
       take: 300,
     });
 
-    const userMap = await this.userNameMap(
+    const userMap = await this.userMap(
       entries.flatMap((entry) => [entry.createdById, entry.approvedById]).filter(Boolean) as string[],
     );
 
     return {
+      timezone: 'Asia/Karachi',
       rows: entries.map((entry) => {
         const debitTotal = entry.lines.reduce((sum, line) => sum + Number(line.debit || 0), 0);
         const creditTotal = entry.lines.reduce((sum, line) => sum + Number(line.credit || 0), 0);
 
         return {
           id: entry.id,
-          entryNo: this.displayEntryNo(entry.entryDate, entry.id),
+          entryNo: displayJournalEntryNo(entry.entryDate, entry.id),
           entryDate: entry.entryDate,
+          entryDateDisplay: formatPakistanDateTime(entry.entryDate),
           sourceType: entry.sourceType,
-          sourceId: entry.sourceId,
-          narration: entry.narration,
+          sourceLabel: sourceTypeLabel(entry.sourceType),
+          narration: cleanAccountingNarration(entry.narration, entry.sourceType),
+          rawNarration: entry.narration,
           status: entry.status,
           debitTotal,
           creditTotal,
-          createdBy: entry.createdById ? userMap[entry.createdById] || entry.createdById : '-',
-          approvedBy: entry.approvedById ? userMap[entry.approvedById] || entry.approvedById : '-',
+          createdBy: entry.createdById ? displayUserName(userMap[entry.createdById]) : 'System',
+          approvedBy: entry.approvedById ? displayUserName(userMap[entry.approvedById]) : '-',
           linesCount: entry.lines.length,
           lines: entry.lines.map((line) => ({
             id: line.id,
@@ -75,7 +87,7 @@ export class AccountingViewsService {
             accountType: line.account.type,
             debit: Number(line.debit || 0),
             credit: Number(line.credit || 0),
-            description: line.description,
+            description: cleanAccountingNarration(line.description, entry.sourceType),
           })),
         };
       }),
@@ -106,7 +118,7 @@ export class AccountingViewsService {
       throw new NotFoundException('Journal entry not found');
     }
 
-    const userMap = await this.userNameMap(
+    const userMap = await this.userMap(
       [entry.createdById, entry.approvedById].filter(Boolean) as string[],
     );
 
@@ -115,14 +127,16 @@ export class AccountingViewsService {
 
     return {
       id: entry.id,
-      entryNo: this.displayEntryNo(entry.entryDate, entry.id),
+      entryNo: displayJournalEntryNo(entry.entryDate, entry.id),
       entryDate: entry.entryDate,
+      entryDateDisplay: formatPakistanDateTime(entry.entryDate),
       sourceType: entry.sourceType,
-      sourceId: entry.sourceId,
-      narration: entry.narration,
+      sourceLabel: sourceTypeLabel(entry.sourceType),
+      narration: cleanAccountingNarration(entry.narration, entry.sourceType),
+      rawNarration: entry.narration,
       status: entry.status,
-      createdBy: entry.createdById ? userMap[entry.createdById] || entry.createdById : '-',
-      approvedBy: entry.approvedById ? userMap[entry.approvedById] || entry.approvedById : '-',
+      createdBy: entry.createdById ? displayUserName(userMap[entry.createdById]) : 'System',
+      approvedBy: entry.approvedById ? displayUserName(userMap[entry.approvedById]) : '-',
       debitTotal,
       creditTotal,
       lines: entry.lines.map((line) => ({
@@ -133,9 +147,8 @@ export class AccountingViewsService {
         accountType: line.account.type,
         debit: Number(line.debit || 0),
         credit: Number(line.credit || 0),
-        description: line.description,
+        description: cleanAccountingNarration(line.description, entry.sourceType),
         partyType: line.partyType,
-        partyId: line.partyId,
       })),
     };
   }
@@ -177,9 +190,11 @@ export class AccountingViewsService {
         })
       : [];
 
-    let runningBalance = openingLines.reduce((sum, line) => {
+    const openingBalance = openingLines.reduce((sum, line) => {
       return sum + this.signedAmount(account.type, Number(line.debit || 0), Number(line.credit || 0));
     }, 0);
+
+    let runningBalance = openingBalance;
 
     const periodLines = await this.prisma.journalLine.findMany({
       where: {
@@ -212,14 +227,17 @@ export class AccountingViewsService {
       return {
         id: line.id,
         journalEntryId: line.journalEntryId,
-        entryNo: this.displayEntryNo(line.journalEntry.entryDate, line.journalEntry.id),
+        entryNo: displayJournalEntryNo(line.journalEntry.entryDate, line.journalEntry.id),
         date: line.journalEntry.entryDate,
-        narration: line.journalEntry.narration,
-        description: line.description,
+        dateDisplay: formatPakistanDate(line.journalEntry.entryDate),
+        narration: cleanAccountingNarration(line.journalEntry.narration, line.journalEntry.sourceType),
+        description: cleanAccountingNarration(line.description, line.journalEntry.sourceType),
         sourceType: line.journalEntry.sourceType,
+        sourceLabel: sourceTypeLabel(line.journalEntry.sourceType),
         debit,
         credit,
         balance: runningBalance,
+        balanceSide: normalBalanceLabel(account.type, runningBalance),
       };
     });
 
@@ -227,6 +245,7 @@ export class AccountingViewsService {
     const periodCredit = rows.reduce((sum, row) => sum + row.credit, 0);
 
     return {
+      timezone: 'Asia/Karachi',
       account: {
         id: account.id,
         code: account.code,
@@ -237,13 +256,13 @@ export class AccountingViewsService {
         from: filter.from || null,
         to: filter.to || null,
       },
-      openingBalance: openingLines.reduce((sum, line) => {
-        return sum + this.signedAmount(account.type, Number(line.debit || 0), Number(line.credit || 0));
-      }, 0),
+      openingBalance,
+      openingBalanceSide: normalBalanceLabel(account.type, openingBalance),
       rows,
       periodDebit,
       periodCredit,
       closingBalance: runningBalance,
+      closingBalanceSide: normalBalanceLabel(account.type, runningBalance),
     };
   }
 
@@ -255,7 +274,7 @@ export class AccountingViewsService {
     return credit - debit;
   }
 
-  private async userNameMap(userIds: string[]) {
+  private async userMap(userIds: string[]) {
     const uniqueIds = Array.from(new Set(userIds));
 
     if (!uniqueIds.length) {
@@ -275,15 +294,13 @@ export class AccountingViewsService {
       },
     });
 
-    return users.reduce<Record<string, string>>((map, user) => {
-      map[user.id] = user.name || user.email;
+    return users.reduce<Record<string, { name: string | null; email: string | null }>>((map, user) => {
+      map[user.id] = {
+        name: user.name,
+        email: user.email,
+      };
       return map;
     }, {});
-  }
-
-  private displayEntryNo(date: Date, id: string) {
-    const year = new Date(date).getFullYear();
-    return `JE-${year}-${id.slice(-6).toUpperCase()}`;
   }
 
   private endOfDay(value: string) {
