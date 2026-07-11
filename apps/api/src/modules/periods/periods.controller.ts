@@ -27,6 +27,35 @@ export class PeriodsController {
     return this.periods.ensureCurrentPeriod(user.sub, businessId);
   }
 
+  @Get('opening-balances')
+  openingBalances(@CurrentUser() user: RequestUser, @Param('businessId') businessId: string) {
+    return this.periods.openingBalanceWizard(user.sub, businessId);
+  }
+
+  @Get('periods/:periodId/opening-balances')
+  openingBalancesForPeriod(
+    @CurrentUser() user: RequestUser,
+    @Param('businessId') businessId: string,
+    @Param('periodId') periodId: string,
+  ) {
+    return this.periods.openingBalanceWizard(user.sub, businessId, periodId);
+  }
+
+  @Post('periods/:periodId/opening-balances')
+  saveOpeningBalances(
+    @CurrentUser() user: RequestUser,
+    @Param('businessId') businessId: string,
+    @Param('periodId') periodId: string,
+    @Body()
+    dto: {
+      rows: Array<{ accountId: string; debit?: number; credit?: number }>;
+      narration?: string;
+      reason?: string;
+    },
+  ) {
+    return this.periods.saveManualOpeningBalances(user.sub, businessId, periodId, dto);
+  }
+
   @Post('periods/:periodId/repair-opening-balances')
   repairOpeningBalances(
     @CurrentUser() user: RequestUser,
