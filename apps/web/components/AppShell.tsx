@@ -35,6 +35,7 @@ const navGroups = [
     items: [
       ['Dashboard', '/dashboard'],
       ['Periods', '/periods'],
+      ['Opening Balances', '/opening-balances'],
       ['Transactions', '/transactions'],
       ['Cash & Bank', '/cash-bank'],
       ['Accounts', '/accounts'],
@@ -60,6 +61,7 @@ const pageLabels: Record<string, string> = {
   '/account-library': 'Account Library',
   '/dashboard': 'Client Dashboard',
   '/periods': 'Accounting Periods',
+  '/opening-balances': 'Opening Balances',
   '/transactions': 'Transactions',
   '/cash-bank': 'Cash & Bank',
   '/accounts': 'Accounts',
