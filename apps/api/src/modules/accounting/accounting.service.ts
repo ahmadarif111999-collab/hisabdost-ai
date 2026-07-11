@@ -609,7 +609,16 @@ export class AccountingService {
     await this.businesses.getAccessibleBusiness(userId, businessId);
 
     const lines = await this.financialLines(businessId, ['INCOME', 'EXPENSE'], from, to);
-    const byAccount: Record<string, { code: string; account: string; type: AccountType; amount: number }> = {};
+
+    const byAccount: Record<
+      string,
+      {
+        code: string;
+        account: string;
+        type: AccountType;
+        amount: number;
+      }
+    > = {};
 
     for (const line of lines) {
       const debit = Number(line.debit);
@@ -682,7 +691,15 @@ export class AccountingService {
       },
     });
 
-    const rows = [];
+    const rows: Array<{
+      id: string;
+      code: string;
+      account: string;
+      type: AccountType;
+      debit: number;
+      credit: number;
+      balance: number;
+    }> = [];
 
     for (const account of accounts) {
       const lines = await this.prisma.journalLine.findMany({
@@ -878,6 +895,269 @@ export class AccountingService {
     return {
       count: items.length,
       items,
+    };
+  }
+
+  async cashBankReport(userId: string, businessId: string, from?: string, to?: string) {
+    await this.businesses.getAccessibleBusiness(userId, businessId);
+
+    const cashBankAccounts = await this.prisma.account.findMany({
+      where: {
+        businessId,
+        isActive: true,
+        type: 'ASSET',
+        OR: [
+          { code: { in: ['1000', '1010', '1020'] } },
+          { name: { contains: 'cash', mode: 'insensitive' } },
+          { name: { contains: 'bank', mode: 'insensitive' } },
+          { name: { contains: 'wallet', mode: 'insensitive' } },
+          { name: { contains: 'easypaisa', mode: 'insensitive' } },
+          { name: { contains: 'jazzcash', mode: 'insensitive' } },
+        ],
+      },
+      orderBy: {
+        code: 'asc',
+      },
+    });
+
+    const rows: Array<{
+      accountId: string;
+      code: string;
+      account: string;
+      type: AccountType;
+      debit: number;
+      credit: number;
+      balance: number;
+    }> = [];
+
+    for (const account of cashBankAccounts) {
+      const lines = await this.prisma.journalLine.findMany({
+        where: {
+          accountId: account.id,
+          journalEntry: {
+            status: 'POSTED',
+            ...(from || to
+              ? {
+                  entryDate: {
+                    ...(from ? { gte: new Date(from) } : {}),
+                    ...(to ? { lte: new Date(to) } : {}),
+                  },
+                }
+              : {}),
+          },
+        },
+      });
+
+      const debit = lines.reduce((sum, line) => sum + Number(line.debit || 0), 0);
+      const credit = lines.reduce((sum, line) => sum + Number(line.credit || 0), 0);
+      const balance = this.naturalBalance(account.type, debit, credit);
+
+      rows.push({
+        accountId: account.id,
+        code: account.code,
+        account: account.name,
+        type: account.type,
+        debit,
+        credit,
+        balance,
+      });
+    }
+
+    return {
+      from: from || null,
+      to: to || null,
+      rows,
+      totalDebit: rows.reduce((sum, row) => sum + row.debit, 0),
+      totalCredit: rows.reduce((sum, row) => sum + row.credit, 0),
+      closingBalance: rows.reduce((sum, row) => sum + row.balance, 0),
+    };
+  }
+
+  async taxSummary(userId: string, businessId: string, from?: string, to?: string) {
+    await this.businesses.getAccessibleBusiness(userId, businessId);
+
+    const taxAccounts = await this.prisma.account.findMany({
+      where: {
+        businessId,
+        isActive: true,
+        OR: [
+          { name: { contains: 'tax', mode: 'insensitive' } },
+          { name: { contains: 'withholding', mode: 'insensitive' } },
+          { name: { contains: 'advance income', mode: 'insensitive' } },
+          { name: { contains: 'sales tax', mode: 'insensitive' } },
+          { name: { contains: 'income tax', mode: 'insensitive' } },
+        ],
+      },
+      orderBy: {
+        code: 'asc',
+      },
+    });
+
+    const rows: Array<{
+      accountId: string;
+      code: string;
+      account: string;
+      type: AccountType;
+      debit: number;
+      credit: number;
+      balance: number;
+    }> = [];
+
+    for (const account of taxAccounts) {
+      const lines = await this.prisma.journalLine.findMany({
+        where: {
+          accountId: account.id,
+          journalEntry: {
+            status: 'POSTED',
+            ...(from || to
+              ? {
+                  entryDate: {
+                    ...(from ? { gte: new Date(from) } : {}),
+                    ...(to ? { lte: new Date(to) } : {}),
+                  },
+                }
+              : {}),
+          },
+        },
+      });
+
+      const debit = lines.reduce((sum, line) => sum + Number(line.debit || 0), 0);
+      const credit = lines.reduce((sum, line) => sum + Number(line.credit || 0), 0);
+      const balance = this.naturalBalance(account.type, debit, credit);
+
+      rows.push({
+        accountId: account.id,
+        code: account.code,
+        account: account.name,
+        type: account.type,
+        debit,
+        credit,
+        balance,
+      });
+    }
+
+    return {
+      from: from || null,
+      to: to || null,
+      rows,
+      totalDebit: rows.reduce((sum, row) => sum + row.debit, 0),
+      totalCredit: rows.reduce((sum, row) => sum + row.credit, 0),
+      netTaxBalance: rows.reduce((sum, row) => sum + row.balance, 0),
+    };
+  }
+
+  async accountUsageReport(userId: string, businessId: string) {
+    await this.businesses.getAccessibleBusiness(userId, businessId);
+
+    const accounts = await this.prisma.account.findMany({
+      where: {
+        businessId,
+        isActive: true,
+      },
+      orderBy: {
+        code: 'asc',
+      },
+    });
+
+    const rows: Array<{
+      accountId: string;
+      code: string;
+      account: string;
+      type: AccountType;
+      isSystem: boolean;
+      requiresReview: boolean;
+      entriesCount: number;
+      debit: number;
+      credit: number;
+      balance: number;
+      used: boolean;
+    }> = [];
+
+    for (const account of accounts) {
+      const lines = await this.prisma.journalLine.findMany({
+        where: {
+          accountId: account.id,
+          journalEntry: {
+            status: 'POSTED',
+          },
+        },
+      });
+
+      const debit = lines.reduce((sum, line) => sum + Number(line.debit || 0), 0);
+      const credit = lines.reduce((sum, line) => sum + Number(line.credit || 0), 0);
+      const balance = this.naturalBalance(account.type, debit, credit);
+
+      rows.push({
+        accountId: account.id,
+        code: account.code,
+        account: account.name,
+        type: account.type,
+        isSystem: account.isSystem,
+        requiresReview: account.requiresReview,
+        entriesCount: lines.length,
+        debit,
+        credit,
+        balance,
+        used: lines.length > 0,
+      });
+    }
+
+    return {
+      totalAccounts: rows.length,
+      usedAccounts: rows.filter((row) => row.used).length,
+      unusedAccounts: rows.filter((row) => !row.used).length,
+      reviewAccounts: rows.filter((row) => row.requiresReview).length,
+      rows,
+    };
+  }
+
+  async monthlyClosingReport(userId: string, businessId: string) {
+    await this.businesses.getAccessibleBusiness(userId, businessId);
+
+    const from = startOfMonth(new Date());
+    const to = endOfMonth(new Date());
+
+    const profitLoss = await this.profitLoss(
+      userId,
+      businessId,
+      from.toISOString(),
+      to.toISOString(),
+    );
+
+    const trialBalance = await this.trialBalance(userId, businessId);
+
+    const cashBank = await this.cashBankReport(
+      userId,
+      businessId,
+      from.toISOString(),
+      to.toISOString(),
+    );
+
+    const missingDocs = await this.missingDocuments(userId, businessId);
+
+    const totalDebit = trialBalance.totalDebit;
+    const totalCredit = trialBalance.totalCredit;
+    const trialBalanceDifference = Math.round((totalDebit - totalCredit) * 100) / 100;
+
+    return {
+      period: {
+        from: from.toISOString(),
+        to: to.toISOString(),
+      },
+      checks: {
+        trialBalanceBalanced: Math.abs(trialBalanceDifference) < 0.01,
+        trialBalanceDifference,
+        missingDocumentsCount: missingDocs.count,
+      },
+      summary: {
+        totalIncome: profitLoss.totalIncome,
+        totalExpenses: profitLoss.totalExpenses,
+        netProfit: profitLoss.netProfit,
+        cashBankClosingBalance: cashBank.closingBalance,
+      },
+      trialBalance,
+      cashBank,
+      missingDocuments: missingDocs,
     };
   }
 
