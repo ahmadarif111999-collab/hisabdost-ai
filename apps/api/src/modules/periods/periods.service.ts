@@ -21,6 +21,18 @@ type FiscalCalendarDto = {
   reason?: string;
 };
 
+type OpeningBalanceRowDto = {
+  accountId: string;
+  debit?: number;
+  credit?: number;
+};
+
+type SaveOpeningBalancesDto = {
+  rows: OpeningBalanceRowDto[];
+  narration?: string;
+  reason?: string;
+};
+
 @Injectable()
 export class PeriodsService {
   constructor(
@@ -287,6 +299,356 @@ export class PeriodsService {
       status: period.status,
       startDate: period.startDate,
       endDate: period.endDate,
+    };
+  }
+
+  async openingBalanceWizard(userId: string, businessId: string, periodId?: string) {
+    const access = await this.businesses.getUserAccessForBusiness(userId, businessId);
+    const ensured = await this.ensureCurrentPeriod(userId, businessId);
+
+    const periods = await this.prisma.accountingPeriod.findMany({
+      where: {
+        businessId,
+      },
+      include: {
+        openingBalances: true,
+      },
+      orderBy: {
+        startDate: 'desc',
+      },
+    });
+
+    const currentPeriod = await this.prisma.accountingPeriod.findFirst({
+      where: {
+        id: ensured.currentPeriod.id,
+        businessId,
+      },
+      include: {
+        openingBalances: true,
+      },
+    });
+
+    const selectedPeriod = periodId
+      ? await this.prisma.accountingPeriod.findFirst({
+          where: {
+            id: periodId,
+            businessId,
+          },
+          include: {
+            openingBalances: true,
+          },
+        })
+      : currentPeriod;
+
+    if (!selectedPeriod) {
+      throw new NotFoundException('Accounting period not found.');
+    }
+
+    const accounts = await this.prisma.account.findMany({
+      where: {
+        businessId,
+        isActive: true,
+      },
+      orderBy: {
+        code: 'asc',
+      },
+    });
+
+    const balances = await this.prisma.openingBalance.findMany({
+      where: {
+        businessId,
+        accountingPeriodId: selectedPeriod.id,
+      },
+      include: {
+        account: true,
+      },
+    });
+
+    const balanceMap = new Map(balances.map((row) => [row.accountId, row]));
+
+    const openingEntry = await this.prisma.journalEntry.findFirst({
+      where: {
+        businessId,
+        accountingPeriodId: selectedPeriod.id,
+        sourceType: 'opening_balance',
+        sourceId: `period:${selectedPeriod.id}`,
+      },
+      select: {
+        id: true,
+        entryDate: true,
+        narration: true,
+        createdAt: true,
+        isSystemGenerated: true,
+      },
+    });
+
+    const totalDebit = balances.reduce((sum, row) => sum + Number(row.debit || 0), 0);
+    const totalCredit = balances.reduce((sum, row) => sum + Number(row.credit || 0), 0);
+
+    return {
+      business: {
+        id: access.business.id,
+        name: access.business.name,
+        entityType: access.business.entityType,
+      },
+      currentPeriod: currentPeriod ? this.serializePeriod(currentPeriod) : ensured.currentPeriod,
+      selectedPeriod: this.serializePeriod(selectedPeriod),
+      periods: periods.map((period) => this.serializePeriod(period)),
+      canEdit:
+        !!access.firmMembership &&
+        (selectedPeriod.status === PeriodStatus.OPEN || selectedPeriod.status === PeriodStatus.REOPENED),
+      warning:
+        selectedPeriod.status === PeriodStatus.AUTO_CLOSED
+          ? 'This period is auto-closed. Ask Ahmad Arif to reopen before editing opening balances.'
+          : selectedPeriod.status === PeriodStatus.FINAL_CLOSED
+            ? 'This period is final-closed. Opening balances cannot be edited.'
+            : null,
+      openingEntry,
+      totals: {
+        debit: totalDebit,
+        credit: totalCredit,
+        difference: Math.round((totalDebit - totalCredit) * 100) / 100,
+        balanced: Math.abs(totalDebit - totalCredit) < 0.01,
+      },
+      rows: accounts.map((account) => {
+        const balance = balanceMap.get(account.id);
+
+        return {
+          accountId: account.id,
+          code: account.code,
+          account: account.name,
+          type: account.type,
+          debit: Number(balance?.debit || 0),
+          credit: Number(balance?.credit || 0),
+          requiresReview: account.requiresReview,
+          isSystem: account.isSystem,
+        };
+      }),
+    };
+  }
+
+  async saveManualOpeningBalances(
+    userId: string,
+    businessId: string,
+    periodId: string,
+    dto: SaveOpeningBalancesDto,
+  ) {
+    const access = await this.businesses.getUserAccessForBusiness(userId, businessId);
+
+    if (!access.firmMembership) {
+      throw new ForbiddenException('Only ProBiz firm users can save opening balances.');
+    }
+
+    const period = await this.prisma.accountingPeriod.findFirst({
+      where: {
+        id: periodId,
+        businessId,
+      },
+    });
+
+    if (!period) {
+      throw new NotFoundException('Accounting period not found.');
+    }
+
+    if (period.status === PeriodStatus.AUTO_CLOSED) {
+      throw new BadRequestException(
+        `${period.label} is auto-closed. Ask Ahmad Arif to reopen it before editing opening balances.`,
+      );
+    }
+
+    if (period.status === PeriodStatus.FINAL_CLOSED) {
+      throw new BadRequestException(`${period.label} is final-closed. Opening balances cannot be edited.`);
+    }
+
+    if (period.status !== PeriodStatus.OPEN && period.status !== PeriodStatus.REOPENED) {
+      throw new BadRequestException(`Opening balances cannot be edited in status ${period.status}.`);
+    }
+
+    const rows = this.normalizeOpeningRows(dto.rows || []);
+
+    const accountIds = rows.map((row) => row.accountId);
+    const accounts = await this.prisma.account.findMany({
+      where: {
+        businessId,
+        id: {
+          in: accountIds,
+        },
+        isActive: true,
+      },
+      orderBy: {
+        code: 'asc',
+      },
+    });
+
+    const accountMap = new Map(accounts.map((account) => [account.id, account]));
+
+    for (const row of rows) {
+      if (!accountMap.has(row.accountId)) {
+        throw new BadRequestException('One or more opening-balance accounts do not belong to this client.');
+      }
+    }
+
+    const totalDebit = rows.reduce((sum, row) => sum + row.debit, 0);
+    const totalCredit = rows.reduce((sum, row) => sum + row.credit, 0);
+    const difference = Math.round((totalDebit - totalCredit) * 100) / 100;
+
+    if (Math.abs(difference) >= 0.01) {
+      throw new BadRequestException(
+        `Opening balance is not balanced. Debit ${totalDebit}, Credit ${totalCredit}, Difference ${difference}.`,
+      );
+    }
+
+    const sourceId = `period:${period.id}`;
+    const narration = dto.narration?.trim() || `Opening balances entered manually for ${period.label}.`;
+
+    await this.prisma.$transaction(async (tx) => {
+      const beforeBalances = await tx.openingBalance.findMany({
+        where: {
+          businessId,
+          accountingPeriodId: period.id,
+        },
+      });
+
+      await tx.openingBalance.deleteMany({
+        where: {
+          businessId,
+          accountingPeriodId: period.id,
+        },
+      });
+
+      if (rows.length) {
+        await tx.openingBalance.createMany({
+          data: rows.map((row) => ({
+            businessId,
+            accountingPeriodId: period.id,
+            accountId: row.accountId,
+            debit: row.debit,
+            credit: row.credit,
+            narration,
+            createdById: userId,
+          })),
+        });
+      }
+
+      const existingEntry = await tx.journalEntry.findFirst({
+        where: {
+          businessId,
+          sourceType: 'opening_balance',
+          sourceId,
+        },
+      });
+
+      if (!rows.length) {
+        if (existingEntry) {
+          await tx.journalEntry.delete({
+            where: {
+              id: existingEntry.id,
+            },
+          });
+        }
+      } else if (existingEntry) {
+        await tx.journalLine.deleteMany({
+          where: {
+            journalEntryId: existingEntry.id,
+          },
+        });
+
+        await tx.journalEntry.update({
+          where: {
+            id: existingEntry.id,
+          },
+          data: {
+            accountingPeriodId: period.id,
+            entryDate: period.startDate,
+            narration,
+            sourceType: 'opening_balance',
+            sourceId,
+            status: 'POSTED',
+            isSystemGenerated: false,
+            createdById: userId,
+            lines: {
+              createMany: {
+                data: rows.map((row) => ({
+                  accountId: row.accountId,
+                  debit: row.debit,
+                  credit: row.credit,
+                  description: 'Manual opening balance',
+                })),
+              },
+            },
+          },
+        });
+      } else {
+        await tx.journalEntry.create({
+          data: {
+            businessId,
+            accountingPeriodId: period.id,
+            entryDate: period.startDate,
+            sourceType: 'opening_balance',
+            sourceId,
+            narration,
+            status: 'POSTED',
+            isSystemGenerated: false,
+            createdById: userId,
+            lines: {
+              createMany: {
+                data: rows.map((row) => ({
+                  accountId: row.accountId,
+                  debit: row.debit,
+                  credit: row.credit,
+                  description: 'Manual opening balance',
+                })),
+              },
+            },
+          },
+        });
+      }
+
+      await tx.periodCloseLog.create({
+        data: {
+          businessId,
+          accountingPeriodId: period.id,
+          action: 'OPENING_BALANCES_MANUAL_POSTED',
+          performedById: userId,
+          reason: dto.reason || 'Opening balances entered from Opening Balance Wizard.',
+          beforeJson: this.jsonSafe(beforeBalances),
+          afterJson: this.jsonSafe({
+            totalDebit,
+            totalCredit,
+            difference,
+            rows,
+          }),
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          organizationId: access.business.organizationId,
+          businessId,
+          userId,
+          action: 'OPENING_BALANCES_MANUAL_POSTED',
+          entityType: 'AccountingPeriod',
+          entityId: period.id,
+          beforeJson: this.jsonSafe(beforeBalances),
+          afterJson: this.jsonSafe({
+            totalDebit,
+            totalCredit,
+            difference,
+            rows,
+          }),
+        },
+      });
+    });
+
+    return {
+      message: `Opening balances saved and posted for ${period.label}.`,
+      period: this.serializePeriod(period),
+      totals: {
+        debit: totalDebit,
+        credit: totalCredit,
+        difference,
+        balanced: true,
+      },
     };
   }
 
@@ -565,6 +927,28 @@ export class PeriodsService {
       period: this.serializePeriod(updated),
       nextOpeningRepairResult,
     };
+  }
+
+  private normalizeOpeningRows(rows: OpeningBalanceRowDto[]) {
+    const cleaned = rows
+      .map((row) => ({
+        accountId: String(row.accountId || '').trim(),
+        debit: Number(row.debit || 0),
+        credit: Number(row.credit || 0),
+      }))
+      .filter((row) => row.accountId && (Math.abs(row.debit) > 0.001 || Math.abs(row.credit) > 0.001));
+
+    for (const row of cleaned) {
+      if (row.debit < 0 || row.credit < 0) {
+        throw new BadRequestException('Opening balance debit/credit cannot be negative.');
+      }
+
+      if (row.debit > 0 && row.credit > 0) {
+        throw new BadRequestException('Use either debit or credit on one account line, not both.');
+      }
+    }
+
+    return cleaned;
   }
 
   private async getOrCreatePeriodForDate(userId: string, business: Business, entryDate: Date) {
