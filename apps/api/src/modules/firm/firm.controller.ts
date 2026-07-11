@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { CurrentUser, RequestUser } from '../../common/auth/current-user.decorator';
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
 import {
@@ -31,13 +31,22 @@ export class FirmController {
     return this.firm.createClient(user.sub, dto);
   }
 
+  @Patch('clients/:businessId/archive')
+  archiveClient(@CurrentUser() user: RequestUser, @Param('businessId') businessId: string) {
+    return this.firm.archiveClient(user.sub, businessId);
+  }
+
   @Post('members/invite')
   inviteFirmMember(@CurrentUser() user: RequestUser, @Body() dto: InviteFirmMemberDto) {
     return this.firm.inviteFirmMember(user.sub, dto);
   }
 
   @Post('clients/:businessId/users/invite')
-  inviteClientUser(@CurrentUser() user: RequestUser, @Param('businessId') businessId: string, @Body() dto: InviteClientUserDto) {
+  inviteClientUser(
+    @CurrentUser() user: RequestUser,
+    @Param('businessId') businessId: string,
+    @Body() dto: InviteClientUserDto,
+  ) {
     return this.firm.inviteClientUser(user.sub, businessId, dto);
   }
 
@@ -62,12 +71,20 @@ export class FirmController {
   }
 
   @Post('account-head-requests/:requestId/approve')
-  approveAccountHeadRequest(@CurrentUser() user: RequestUser, @Param('requestId') requestId: string, @Body() dto: ApproveAccountHeadRequestDto) {
+  approveAccountHeadRequest(
+    @CurrentUser() user: RequestUser,
+    @Param('requestId') requestId: string,
+    @Body() dto: ApproveAccountHeadRequestDto,
+  ) {
     return this.firm.approveAccountHeadRequest(user.sub, requestId, dto);
   }
 
   @Post('account-head-requests/:requestId/reject')
-  rejectAccountHeadRequest(@CurrentUser() user: RequestUser, @Param('requestId') requestId: string, @Body() dto: RejectRequestDto) {
+  rejectAccountHeadRequest(
+    @CurrentUser() user: RequestUser,
+    @Param('requestId') requestId: string,
+    @Body() dto: RejectRequestDto,
+  ) {
     return this.firm.rejectAccountHeadRequest(user.sub, requestId, dto);
   }
 
@@ -77,12 +94,20 @@ export class FirmController {
   }
 
   @Post('report-export-requests/:requestId/approve')
-  approveReportExportRequest(@CurrentUser() user: RequestUser, @Param('requestId') requestId: string, @Body() dto: RejectRequestDto) {
+  approveReportExportRequest(
+    @CurrentUser() user: RequestUser,
+    @Param('requestId') requestId: string,
+    @Body() dto: RejectRequestDto,
+  ) {
     return this.firm.decideReportExportRequest(user.sub, requestId, 'approved', dto.decisionNote);
   }
 
   @Post('report-export-requests/:requestId/reject')
-  rejectReportExportRequest(@CurrentUser() user: RequestUser, @Param('requestId') requestId: string, @Body() dto: RejectRequestDto) {
+  rejectReportExportRequest(
+    @CurrentUser() user: RequestUser,
+    @Param('requestId') requestId: string,
+    @Body() dto: RejectRequestDto,
+  ) {
     return this.firm.decideReportExportRequest(user.sub, requestId, 'rejected', dto.decisionNote);
   }
 }
