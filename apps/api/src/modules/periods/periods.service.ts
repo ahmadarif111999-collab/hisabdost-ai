@@ -80,11 +80,19 @@ export class PeriodsService {
     const fiscalYearStartMonth = Number(dto.fiscalYearStartMonth);
     const fiscalYearStartDay = Number(dto.fiscalYearStartDay);
 
-    if (!Number.isInteger(fiscalYearStartMonth) || fiscalYearStartMonth < 1 || fiscalYearStartMonth > 12) {
+    if (
+      !Number.isInteger(fiscalYearStartMonth) ||
+      fiscalYearStartMonth < 1 ||
+      fiscalYearStartMonth > 12
+    ) {
       throw new BadRequestException('Fiscal year start month must be between 1 and 12.');
     }
 
-    if (!Number.isInteger(fiscalYearStartDay) || fiscalYearStartDay < 1 || fiscalYearStartDay > 31) {
+    if (
+      !Number.isInteger(fiscalYearStartDay) ||
+      fiscalYearStartDay < 1 ||
+      fiscalYearStartDay > 31
+    ) {
       throw new BadRequestException('Fiscal year start day must be between 1 and 31.');
     }
 
@@ -166,11 +174,12 @@ export class PeriodsService {
           accountingPeriodId: currentPeriod.id,
           action: 'PERIOD_CREATED',
           performedById: userId,
-          afterJson: {
+          afterJson: this.jsonSafe({
             label: currentPeriod.label,
             startDate: currentPeriod.startDate,
             endDate: currentPeriod.endDate,
-          },
+            status: currentPeriod.status,
+          }),
         },
       });
     }
@@ -193,6 +202,91 @@ export class PeriodsService {
       currentPeriod: this.serializePeriod(currentPeriod),
       autoCloseResult,
       openingRepairResult,
+    };
+  }
+
+  async ensurePostingAllowed(userId: string, businessId: string, entryDateInput?: Date | string) {
+    const access = await this.businesses.getUserAccessForBusiness(userId, businessId);
+    const business = access.business as Business;
+
+    await this.ensureCurrentPeriod(userId, businessId);
+
+    const entryDate = entryDateInput ? new Date(entryDateInput) : new Date();
+
+    if (Number.isNaN(entryDate.getTime())) {
+      throw new BadRequestException('Invalid accounting entry date.');
+    }
+
+    const period = await this.getOrCreatePeriodForDate(userId, business, entryDate);
+
+    if (period.status === PeriodStatus.AUTO_CLOSED) {
+      throw new BadRequestException(
+        `This entry date falls inside ${period.label}, which is auto-closed. Ask Ahmad Arif to reopen the period before posting.`,
+      );
+    }
+
+    if (period.status === PeriodStatus.FINAL_CLOSED) {
+      throw new BadRequestException(
+        `This entry date falls inside ${period.label}, which is final-closed. Posting is blocked.`,
+      );
+    }
+
+    if (period.status !== PeriodStatus.OPEN && period.status !== PeriodStatus.REOPENED) {
+      throw new BadRequestException(`Posting is not allowed in period status: ${period.status}.`);
+    }
+
+    return {
+      id: period.id,
+      label: period.label,
+      status: period.status,
+      startDate: period.startDate,
+      endDate: period.endDate,
+    };
+  }
+
+  async ensureJournalEntryEditable(userId: string, businessId: string, journalEntryId: string) {
+    const entry = await this.prisma.journalEntry.findFirst({
+      where: {
+        id: journalEntryId,
+        businessId,
+      },
+      include: {
+        accountingPeriod: true,
+      },
+    });
+
+    if (!entry) {
+      throw new NotFoundException('Journal entry not found.');
+    }
+
+    if (!entry.accountingPeriodId) {
+      return this.ensurePostingAllowed(userId, businessId, entry.entryDate);
+    }
+
+    const period = entry.accountingPeriod;
+
+    if (!period) {
+      return this.ensurePostingAllowed(userId, businessId, entry.entryDate);
+    }
+
+    if (period.status === PeriodStatus.AUTO_CLOSED) {
+      throw new BadRequestException(
+        `This journal entry belongs to ${period.label}, which is auto-closed. Ask Ahmad Arif to reopen the period before editing.`,
+      );
+    }
+
+    if (period.status === PeriodStatus.FINAL_CLOSED) {
+      throw new BadRequestException(
+        `This journal entry belongs to ${period.label}, which is final-closed. Editing is blocked.`,
+      );
+    }
+
+    return {
+      id: period.id,
+      label: period.label,
+      status: period.status,
+      startDate: period.startDate,
+      endDate: period.endDate,
     };
   }
 
@@ -392,8 +486,8 @@ export class PeriodsService {
         action: 'PERIOD_REOPENED_BY_AHMAD',
         performedById: userId,
         reason: reason.trim(),
-        beforeJson: period,
-        afterJson: updated,
+        beforeJson: this.jsonSafe(period),
+        afterJson: this.jsonSafe(updated),
       },
     });
 
@@ -426,6 +520,8 @@ export class PeriodsService {
         status: PeriodStatus.FINAL_CLOSED,
         finalizedAt: new Date(),
         finalizedById: userId,
+        closedAt: new Date(),
+        closedById: userId,
       },
     });
 
@@ -436,15 +532,97 @@ export class PeriodsService {
         action: 'PERIOD_FINAL_CLOSED_BY_AHMAD',
         performedById: userId,
         reason: reason || 'Final close from Periods page.',
-        beforeJson: period,
-        afterJson: updated,
+        beforeJson: this.jsonSafe(period),
+        afterJson: this.jsonSafe(updated),
       },
     });
+
+    const nextPeriod = await this.prisma.accountingPeriod.findFirst({
+      where: {
+        businessId,
+        startDate: {
+          gt: updated.startDate,
+        },
+      },
+      orderBy: {
+        startDate: 'asc',
+      },
+    });
+
+    let nextOpeningRepairResult: any = null;
+
+    if (nextPeriod) {
+      nextOpeningRepairResult = await this.repairOpeningBalances(
+        userId,
+        businessId,
+        nextPeriod.id,
+        true,
+      );
+    }
 
     return {
       message: 'Period final-closed by Ahmad Arif.',
       period: this.serializePeriod(updated),
+      nextOpeningRepairResult,
     };
+  }
+
+  private async getOrCreatePeriodForDate(userId: string, business: Business, entryDate: Date) {
+    const todayRange = this.periodRangeForDate(
+      new Date(),
+      business.fiscalYearStartMonth || 7,
+      business.fiscalYearStartDay || 1,
+    );
+
+    const entryRange = this.periodRangeForDate(
+      entryDate,
+      business.fiscalYearStartMonth || 7,
+      business.fiscalYearStartDay || 1,
+    );
+
+    let period = await this.prisma.accountingPeriod.findFirst({
+      where: {
+        businessId: business.id,
+        startDate: entryRange.startDate,
+        endDate: entryRange.endDate,
+      },
+    });
+
+    if (period) {
+      return period;
+    }
+
+    const isPastPeriod = entryRange.endDate < todayRange.startDate;
+    const initialStatus = isPastPeriod ? PeriodStatus.AUTO_CLOSED : PeriodStatus.OPEN;
+
+    period = await this.prisma.accountingPeriod.create({
+      data: {
+        businessId: business.id,
+        label: entryRange.label,
+        startDate: entryRange.startDate,
+        endDate: entryRange.endDate,
+        status: initialStatus,
+        autoClosedAt: isPastPeriod ? new Date() : null,
+        closedAt: isPastPeriod ? new Date() : null,
+      },
+    });
+
+    await this.prisma.periodCloseLog.create({
+      data: {
+        businessId: business.id,
+        accountingPeriodId: period.id,
+        action: isPastPeriod ? 'PAST_PERIOD_CREATED_AS_AUTO_CLOSED' : 'PERIOD_CREATED_FOR_ENTRY_DATE',
+        performedById: userId,
+        afterJson: this.jsonSafe({
+          label: period.label,
+          startDate: period.startDate,
+          endDate: period.endDate,
+          status: period.status,
+        }),
+      },
+    });
+
+    return period;
   }
 
   private async autoClosePreviousPeriods(
@@ -484,8 +662,8 @@ export class PeriodsService {
           accountingPeriodId: period.id,
           action: 'PERIOD_AUTO_CLOSED_ON_NEW_PERIOD',
           performedById: userId,
-          beforeJson: period,
-          afterJson: updated,
+          beforeJson: this.jsonSafe(period),
+          afterJson: this.jsonSafe(updated),
         },
       });
 
@@ -534,7 +712,11 @@ export class PeriodsService {
 
     for (const line of lines) {
       const account = line.account;
-      const signed = this.signedAmount(account.type, Number(line.debit || 0), Number(line.credit || 0));
+      const signed = this.signedAmount(
+        account.type,
+        Number(line.debit || 0),
+        Number(line.credit || 0),
+      );
 
       if (account.type === 'ASSET' || account.type === 'LIABILITY' || account.type === 'EQUITY') {
         permanentBalances.set(account.id, (permanentBalances.get(account.id) || 0) + signed);
@@ -680,6 +862,7 @@ export class PeriodsService {
 
   private periodRangeForDate(date: Date, fiscalYearStartMonth: number, fiscalYearStartDay: number) {
     const current = this.startOfUtcDate(date);
+
     let start = this.safeUtcDate(
       current.getUTCFullYear(),
       fiscalYearStartMonth,
@@ -757,5 +940,9 @@ export class PeriodsService {
     if (!allowed) {
       throw new ForbiddenException('Only Ahmad Arif can reopen or final-close previous periods.');
     }
+  }
+
+  private jsonSafe(value: any) {
+    return JSON.parse(JSON.stringify(value));
   }
 }
