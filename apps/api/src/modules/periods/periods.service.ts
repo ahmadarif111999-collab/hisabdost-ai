@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { AccountType, Business, PeriodStatus } from '@prisma/client';
+import { Account, AccountType, AccountingPeriod, Business, PeriodStatus } from '@prisma/client';
 import { BusinessesService } from '../businesses/businesses.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -33,6 +33,16 @@ type SaveOpeningBalancesDto = {
   reason?: string;
 };
 
+type ClosingLine = {
+  accountId: string;
+  code: string;
+  account: string;
+  type: AccountType;
+  debit: number;
+  credit: number;
+  description: string;
+};
+
 @Injectable()
 export class PeriodsService {
   constructor(
@@ -42,19 +52,12 @@ export class PeriodsService {
 
   async dashboard(userId: string, businessId: string) {
     const access = await this.businesses.getUserAccessForBusiness(userId, businessId);
-
     const ensured = await this.ensureCurrentPeriod(userId, businessId);
 
     const periods = await this.prisma.accountingPeriod.findMany({
-      where: {
-        businessId,
-      },
-      orderBy: {
-        startDate: 'desc',
-      },
-      include: {
-        openingBalances: true,
-      },
+      where: { businessId },
+      orderBy: { startDate: 'desc' },
+      include: { openingBalances: true },
     });
 
     const currentPeriod =
@@ -78,6 +81,7 @@ export class PeriodsService {
       permissions: {
         canReopenPreviousPeriod: await this.isAhmad(userId),
         canFinalClosePeriod: await this.isAhmad(userId),
+        canYearEndClose: await this.isAhmad(userId),
       },
     };
   }
@@ -114,13 +118,8 @@ export class PeriodsService {
     };
 
     const updated = await this.prisma.business.update({
-      where: {
-        id: businessId,
-      },
-      data: {
-        fiscalYearStartMonth,
-        fiscalYearStartDay,
-      },
+      where: { id: businessId },
+      data: { fiscalYearStartMonth, fiscalYearStartDay },
     });
 
     await this.prisma.auditLog.create({
@@ -258,28 +257,19 @@ export class PeriodsService {
 
   async ensureJournalEntryEditable(userId: string, businessId: string, journalEntryId: string) {
     const entry = await this.prisma.journalEntry.findFirst({
-      where: {
-        id: journalEntryId,
-        businessId,
-      },
-      include: {
-        accountingPeriod: true,
-      },
+      where: { id: journalEntryId, businessId },
+      include: { accountingPeriod: true },
     });
 
     if (!entry) {
       throw new NotFoundException('Journal entry not found.');
     }
 
-    if (!entry.accountingPeriodId) {
+    if (!entry.accountingPeriodId || !entry.accountingPeriod) {
       return this.ensurePostingAllowed(userId, businessId, entry.entryDate);
     }
 
     const period = entry.accountingPeriod;
-
-    if (!period) {
-      return this.ensurePostingAllowed(userId, businessId, entry.entryDate);
-    }
 
     if (period.status === PeriodStatus.AUTO_CLOSED) {
       throw new BadRequestException(
@@ -307,36 +297,20 @@ export class PeriodsService {
     const ensured = await this.ensureCurrentPeriod(userId, businessId);
 
     const periods = await this.prisma.accountingPeriod.findMany({
-      where: {
-        businessId,
-      },
-      include: {
-        openingBalances: true,
-      },
-      orderBy: {
-        startDate: 'desc',
-      },
+      where: { businessId },
+      include: { openingBalances: true },
+      orderBy: { startDate: 'desc' },
     });
 
     const currentPeriod = await this.prisma.accountingPeriod.findFirst({
-      where: {
-        id: ensured.currentPeriod.id,
-        businessId,
-      },
-      include: {
-        openingBalances: true,
-      },
+      where: { id: ensured.currentPeriod.id, businessId },
+      include: { openingBalances: true },
     });
 
     const selectedPeriod = periodId
       ? await this.prisma.accountingPeriod.findFirst({
-          where: {
-            id: periodId,
-            businessId,
-          },
-          include: {
-            openingBalances: true,
-          },
+          where: { id: periodId, businessId },
+          include: { openingBalances: true },
         })
       : currentPeriod;
 
@@ -345,23 +319,13 @@ export class PeriodsService {
     }
 
     const accounts = await this.prisma.account.findMany({
-      where: {
-        businessId,
-        isActive: true,
-      },
-      orderBy: {
-        code: 'asc',
-      },
+      where: { businessId, isActive: true },
+      orderBy: { code: 'asc' },
     });
 
     const balances = await this.prisma.openingBalance.findMany({
-      where: {
-        businessId,
-        accountingPeriodId: selectedPeriod.id,
-      },
-      include: {
-        account: true,
-      },
+      where: { businessId, accountingPeriodId: selectedPeriod.id },
+      include: { account: true },
     });
 
     const balanceMap = new Map(balances.map((row) => [row.accountId, row]));
@@ -440,10 +404,7 @@ export class PeriodsService {
     }
 
     const period = await this.prisma.accountingPeriod.findFirst({
-      where: {
-        id: periodId,
-        businessId,
-      },
+      where: { id: periodId, businessId },
     });
 
     if (!period) {
@@ -470,14 +431,10 @@ export class PeriodsService {
     const accounts = await this.prisma.account.findMany({
       where: {
         businessId,
-        id: {
-          in: accountIds,
-        },
+        id: { in: accountIds },
         isActive: true,
       },
-      orderBy: {
-        code: 'asc',
-      },
+      orderBy: { code: 'asc' },
     });
 
     const accountMap = new Map(accounts.map((account) => [account.id, account]));
@@ -503,17 +460,11 @@ export class PeriodsService {
 
     await this.prisma.$transaction(async (tx) => {
       const beforeBalances = await tx.openingBalance.findMany({
-        where: {
-          businessId,
-          accountingPeriodId: period.id,
-        },
+        where: { businessId, accountingPeriodId: period.id },
       });
 
       await tx.openingBalance.deleteMany({
-        where: {
-          businessId,
-          accountingPeriodId: period.id,
-        },
+        where: { businessId, accountingPeriodId: period.id },
       });
 
       if (rows.length) {
@@ -531,32 +482,18 @@ export class PeriodsService {
       }
 
       const existingEntry = await tx.journalEntry.findFirst({
-        where: {
-          businessId,
-          sourceType: 'opening_balance',
-          sourceId,
-        },
+        where: { businessId, sourceType: 'opening_balance', sourceId },
       });
 
       if (!rows.length) {
         if (existingEntry) {
-          await tx.journalEntry.delete({
-            where: {
-              id: existingEntry.id,
-            },
-          });
+          await tx.journalEntry.delete({ where: { id: existingEntry.id } });
         }
       } else if (existingEntry) {
-        await tx.journalLine.deleteMany({
-          where: {
-            journalEntryId: existingEntry.id,
-          },
-        });
+        await tx.journalLine.deleteMany({ where: { journalEntryId: existingEntry.id } });
 
         await tx.journalEntry.update({
-          where: {
-            id: existingEntry.id,
-          },
+          where: { id: existingEntry.id },
           data: {
             accountingPeriodId: period.id,
             entryDate: period.startDate,
@@ -612,12 +549,7 @@ export class PeriodsService {
           performedById: userId,
           reason: dto.reason || 'Opening balances entered from Opening Balance Wizard.',
           beforeJson: this.jsonSafe(beforeBalances),
-          afterJson: this.jsonSafe({
-            totalDebit,
-            totalCredit,
-            difference,
-            rows,
-          }),
+          afterJson: this.jsonSafe({ totalDebit, totalCredit, difference, rows }),
         },
       });
 
@@ -630,12 +562,7 @@ export class PeriodsService {
           entityType: 'AccountingPeriod',
           entityId: period.id,
           beforeJson: this.jsonSafe(beforeBalances),
-          afterJson: this.jsonSafe({
-            totalDebit,
-            totalCredit,
-            difference,
-            rows,
-          }),
+          afterJson: this.jsonSafe({ totalDebit, totalCredit, difference, rows }),
         },
       });
     });
@@ -643,12 +570,72 @@ export class PeriodsService {
     return {
       message: `Opening balances saved and posted for ${period.label}.`,
       period: this.serializePeriod(period),
-      totals: {
-        debit: totalDebit,
-        credit: totalCredit,
-        difference,
-        balanced: true,
+      totals: { debit: totalDebit, credit: totalCredit, difference, balanced: true },
+    };
+  }
+
+  async yearEndClosePeriod(userId: string, businessId: string, periodId: string, reason?: string) {
+    await this.assertAhmad(userId);
+
+    const business = await this.prisma.business.findFirst({
+      where: { id: businessId },
+    });
+
+    if (!business) {
+      throw new NotFoundException('Client business not found.');
+    }
+
+    const period = await this.prisma.accountingPeriod.findFirst({
+      where: { id: periodId, businessId },
+    });
+
+    if (!period) {
+      throw new NotFoundException('Accounting period not found.');
+    }
+
+    if (period.status === PeriodStatus.FINAL_CLOSED) {
+      throw new BadRequestException(`${period.label} is final-closed. Year-end close cannot be changed.`);
+    }
+
+    const closeResult = await this.postYearEndClosingEntry(
+      userId,
+      business,
+      period,
+      reason || 'Year-end closing entry posted.',
+    );
+
+    const updated = await this.prisma.accountingPeriod.update({
+      where: { id: period.id },
+      data: {
+        status: PeriodStatus.AUTO_CLOSED,
+        closedAt: new Date(),
+        closedById: userId,
+        autoClosedAt: period.autoClosedAt || new Date(),
       },
+    });
+
+    await this.prisma.periodCloseLog.create({
+      data: {
+        businessId,
+        accountingPeriodId: period.id,
+        action: 'YEAR_END_CLOSE_COMPLETED',
+        performedById: userId,
+        reason: reason || 'Year-end close from Periods page.',
+        beforeJson: this.jsonSafe(period),
+        afterJson: this.jsonSafe({
+          period: updated,
+          closeResult,
+        }),
+      },
+    });
+
+    const nextRepair = await this.repairNextPeriodOpeningBalances(userId, business, updated);
+
+    return {
+      message: `${period.label} year-end close completed.`,
+      period: this.serializePeriod(updated),
+      closeResult,
+      nextOpeningRepairResult: nextRepair,
     };
   }
 
@@ -661,10 +648,7 @@ export class PeriodsService {
     await this.businesses.getAccessibleBusiness(userId, businessId);
 
     const period = await this.prisma.accountingPeriod.findFirst({
-      where: {
-        id: periodId,
-        businessId,
-      },
+      where: { id: periodId, businessId },
     });
 
     if (!period) {
@@ -672,9 +656,7 @@ export class PeriodsService {
     }
 
     const business = await this.prisma.business.findUnique({
-      where: {
-        id: businessId,
-      },
+      where: { id: businessId },
     });
 
     if (!business) {
@@ -698,9 +680,7 @@ export class PeriodsService {
 
     await this.prisma.$transaction(async (tx) => {
       await tx.openingBalance.deleteMany({
-        where: {
-          accountingPeriodId: period.id,
-        },
+        where: { accountingPeriodId: period.id },
       });
 
       if (calculation.rows.length) {
@@ -719,32 +699,20 @@ export class PeriodsService {
 
       const sourceId = `period:${period.id}`;
       const existingEntry = await tx.journalEntry.findFirst({
-        where: {
-          businessId,
-          sourceType: 'opening_balance',
-          sourceId,
-        },
+        where: { businessId, sourceType: 'opening_balance', sourceId },
       });
 
       if (!calculation.rows.length) {
         if (existingEntry) {
-          await tx.journalEntry.delete({
-            where: {
-              id: existingEntry.id,
-            },
-          });
+          await tx.journalEntry.delete({ where: { id: existingEntry.id } });
         }
       } else if (existingEntry) {
         await tx.journalLine.deleteMany({
-          where: {
-            journalEntryId: existingEntry.id,
-          },
+          where: { journalEntryId: existingEntry.id },
         });
 
         await tx.journalEntry.update({
-          where: {
-            id: existingEntry.id,
-          },
+          where: { id: existingEntry.id },
           data: {
             accountingPeriodId: period.id,
             entryDate: period.startDate,
@@ -815,10 +783,7 @@ export class PeriodsService {
     }
 
     const period = await this.prisma.accountingPeriod.findFirst({
-      where: {
-        id: periodId,
-        businessId,
-      },
+      where: { id: periodId, businessId },
     });
 
     if (!period) {
@@ -830,9 +795,7 @@ export class PeriodsService {
     }
 
     const updated = await this.prisma.accountingPeriod.update({
-      where: {
-        id: periodId,
-      },
+      where: { id: periodId },
       data: {
         status: PeriodStatus.REOPENED,
         reopenedAt: new Date(),
@@ -863,21 +826,35 @@ export class PeriodsService {
   async finalClosePeriod(userId: string, businessId: string, periodId: string, reason?: string) {
     await this.assertAhmad(userId);
 
+    const business = await this.prisma.business.findFirst({
+      where: { id: businessId },
+    });
+
+    if (!business) {
+      throw new NotFoundException('Client business not found.');
+    }
+
     const period = await this.prisma.accountingPeriod.findFirst({
-      where: {
-        id: periodId,
-        businessId,
-      },
+      where: { id: periodId, businessId },
     });
 
     if (!period) {
       throw new NotFoundException('Accounting period not found.');
     }
 
+    if (period.status === PeriodStatus.FINAL_CLOSED) {
+      throw new BadRequestException(`${period.label} is already final-closed.`);
+    }
+
+    const closeResult = await this.postYearEndClosingEntry(
+      userId,
+      business,
+      period,
+      reason || 'Final year-end closing entry posted.',
+    );
+
     const updated = await this.prisma.accountingPeriod.update({
-      where: {
-        id: periodId,
-      },
+      where: { id: periodId },
       data: {
         status: PeriodStatus.FINAL_CLOSED,
         finalizedAt: new Date(),
@@ -895,38 +872,362 @@ export class PeriodsService {
         performedById: userId,
         reason: reason || 'Final close from Periods page.',
         beforeJson: this.jsonSafe(period),
-        afterJson: this.jsonSafe(updated),
+        afterJson: this.jsonSafe({
+          period: updated,
+          closeResult,
+        }),
       },
     });
 
-    const nextPeriod = await this.prisma.accountingPeriod.findFirst({
-      where: {
-        businessId,
-        startDate: {
-          gt: updated.startDate,
-        },
-      },
-      orderBy: {
-        startDate: 'asc',
-      },
-    });
-
-    let nextOpeningRepairResult: any = null;
-
-    if (nextPeriod) {
-      nextOpeningRepairResult = await this.repairOpeningBalances(
-        userId,
-        businessId,
-        nextPeriod.id,
-        true,
-      );
-    }
+    const nextOpeningRepairResult = await this.repairNextPeriodOpeningBalances(userId, business, updated);
 
     return {
       message: 'Period final-closed by Ahmad Arif.',
       period: this.serializePeriod(updated),
+      closeResult,
       nextOpeningRepairResult,
     };
+  }
+
+  private async postYearEndClosingEntry(
+    userId: string,
+    business: Business,
+    period: AccountingPeriod,
+    reason: string,
+  ) {
+    const calculation = await this.calculateYearEndClosingRows(business, period);
+
+    if (!calculation.equityAccount && Math.abs(calculation.netProfit) >= 0.01) {
+      throw new BadRequestException(
+        business.entityType === 'PVT_LTD'
+          ? 'Retained Earnings account is missing. Create an equity account named Retained Earnings or code 3200.'
+          : 'Owner Capital account is missing. Create an equity account named Owner Capital or code 3000.',
+      );
+    }
+
+    if (!calculation.isBalanced) {
+      throw new BadRequestException(
+        `Year-end closing entry is not balanced. Difference: ${calculation.difference}.`,
+      );
+    }
+
+    const sourceId = `period:${period.id}`;
+    const narration = `Year-end close for ${period.label}. ${reason}`;
+
+    await this.prisma.$transaction(async (tx) => {
+      const existingEntry = await tx.journalEntry.findFirst({
+        where: {
+          businessId: business.id,
+          sourceType: 'year_end_close',
+          sourceId,
+        },
+      });
+
+      if (!calculation.rows.length) {
+        if (existingEntry) {
+          await tx.journalEntry.delete({
+            where: { id: existingEntry.id },
+          });
+        }
+      } else if (existingEntry) {
+        await tx.journalLine.deleteMany({
+          where: { journalEntryId: existingEntry.id },
+        });
+
+        await tx.journalEntry.update({
+          where: { id: existingEntry.id },
+          data: {
+            accountingPeriodId: period.id,
+            entryDate: period.endDate,
+            narration,
+            status: 'POSTED',
+            isSystemGenerated: true,
+            createdById: userId,
+            lines: {
+              createMany: {
+                data: calculation.rows.map((row) => ({
+                  accountId: row.accountId,
+                  debit: row.debit,
+                  credit: row.credit,
+                  description: row.description,
+                })),
+              },
+            },
+          },
+        });
+      } else {
+        await tx.journalEntry.create({
+          data: {
+            businessId: business.id,
+            accountingPeriodId: period.id,
+            entryDate: period.endDate,
+            sourceType: 'year_end_close',
+            sourceId,
+            narration,
+            status: 'POSTED',
+            isSystemGenerated: true,
+            createdById: userId,
+            lines: {
+              createMany: {
+                data: calculation.rows.map((row) => ({
+                  accountId: row.accountId,
+                  debit: row.debit,
+                  credit: row.credit,
+                  description: row.description,
+                })),
+              },
+            },
+          },
+        });
+      }
+
+      await tx.periodCloseLog.create({
+        data: {
+          businessId: business.id,
+          accountingPeriodId: period.id,
+          action: 'YEAR_END_CLOSING_ENTRY_POSTED',
+          performedById: userId,
+          reason,
+          afterJson: this.jsonSafe(calculation),
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          organizationId: business.organizationId,
+          businessId: business.id,
+          userId,
+          action: 'YEAR_END_CLOSING_ENTRY_POSTED',
+          entityType: 'AccountingPeriod',
+          entityId: period.id,
+          afterJson: this.jsonSafe(calculation),
+        },
+      });
+    });
+
+    return calculation;
+  }
+
+  private async calculateYearEndClosingRows(business: Business, period: AccountingPeriod) {
+    const accounts = await this.prisma.account.findMany({
+      where: {
+        businessId: business.id,
+        isActive: true,
+      },
+      orderBy: { code: 'asc' },
+    });
+
+    const lines = await this.prisma.journalLine.findMany({
+      where: {
+        account: {
+          businessId: business.id,
+          type: {
+            in: [AccountType.INCOME, AccountType.EXPENSE],
+          },
+        },
+        journalEntry: {
+          businessId: business.id,
+          status: 'POSTED',
+          entryDate: {
+            gte: period.startDate,
+            lte: period.endDate,
+          },
+          sourceType: {
+            not: 'year_end_close',
+          },
+        },
+      },
+      include: {
+        account: true,
+        journalEntry: true,
+      },
+    });
+
+    const balances = new Map<string, number>();
+
+    for (const line of lines) {
+      const signed = this.signedAmount(
+        line.account.type,
+        Number(line.debit || 0),
+        Number(line.credit || 0),
+      );
+
+      balances.set(line.accountId, (balances.get(line.accountId) || 0) + signed);
+    }
+
+    const rows: ClosingLine[] = [];
+    let totalIncome = 0;
+    let totalExpense = 0;
+
+    for (const [accountId, signedBalance] of balances.entries()) {
+      if (Math.abs(signedBalance) < 0.01) continue;
+
+      const account = accounts.find((item) => item.id === accountId);
+
+      if (!account) continue;
+
+      if (account.type === AccountType.INCOME) {
+        totalIncome += signedBalance;
+
+        if (signedBalance > 0) {
+          rows.push({
+            accountId: account.id,
+            code: account.code,
+            account: account.name,
+            type: account.type,
+            debit: signedBalance,
+            credit: 0,
+            description: `Close income account ${account.code} - ${account.name}`,
+          });
+        } else {
+          rows.push({
+            accountId: account.id,
+            code: account.code,
+            account: account.name,
+            type: account.type,
+            debit: 0,
+            credit: Math.abs(signedBalance),
+            description: `Close contra income account ${account.code} - ${account.name}`,
+          });
+        }
+      }
+
+      if (account.type === AccountType.EXPENSE) {
+        totalExpense += signedBalance;
+
+        if (signedBalance > 0) {
+          rows.push({
+            accountId: account.id,
+            code: account.code,
+            account: account.name,
+            type: account.type,
+            debit: 0,
+            credit: signedBalance,
+            description: `Close expense account ${account.code} - ${account.name}`,
+          });
+        } else {
+          rows.push({
+            accountId: account.id,
+            code: account.code,
+            account: account.name,
+            type: account.type,
+            debit: Math.abs(signedBalance),
+            credit: 0,
+            description: `Close contra expense account ${account.code} - ${account.name}`,
+          });
+        }
+      }
+    }
+
+    const netProfit = totalIncome - totalExpense;
+    const equityAccount = this.findProfitCloseAccount(business, accounts);
+
+    if (Math.abs(netProfit) >= 0.01 && equityAccount) {
+      if (netProfit > 0) {
+        rows.push({
+          accountId: equityAccount.id,
+          code: equityAccount.code,
+          account: equityAccount.name,
+          type: equityAccount.type,
+          debit: 0,
+          credit: netProfit,
+          description:
+            business.entityType === 'PVT_LTD'
+              ? `Transfer profit to retained earnings for ${period.label}`
+              : `Transfer profit to owner capital for ${period.label}`,
+        });
+      } else {
+        rows.push({
+          accountId: equityAccount.id,
+          code: equityAccount.code,
+          account: equityAccount.name,
+          type: equityAccount.type,
+          debit: Math.abs(netProfit),
+          credit: 0,
+          description:
+            business.entityType === 'PVT_LTD'
+              ? `Transfer loss to retained earnings for ${period.label}`
+              : `Transfer loss to owner capital for ${period.label}`,
+        });
+      }
+    }
+
+    const totalDebit = rows.reduce((sum, row) => sum + row.debit, 0);
+    const totalCredit = rows.reduce((sum, row) => sum + row.credit, 0);
+    const difference = Math.round((totalDebit - totalCredit) * 100) / 100;
+
+    return {
+      period: {
+        id: period.id,
+        label: period.label,
+        startDate: formatPakistanDate(period.startDate),
+        endDate: formatPakistanDate(period.endDate),
+      },
+      totalIncome,
+      totalExpense,
+      netProfit,
+      closeToAccount: equityAccount
+        ? {
+            id: equityAccount.id,
+            code: equityAccount.code,
+            name: equityAccount.name,
+            type: equityAccount.type,
+          }
+        : null,
+      equityAccount: equityAccount
+        ? {
+            id: equityAccount.id,
+            code: equityAccount.code,
+            name: equityAccount.name,
+            type: equityAccount.type,
+          }
+        : null,
+      rows,
+      totalDebit,
+      totalCredit,
+      difference,
+      isBalanced: Math.abs(difference) < 0.01,
+    };
+  }
+
+  private findProfitCloseAccount(business: Business, accounts: Account[]) {
+    const equityAccounts = accounts.filter((account) => account.type === AccountType.EQUITY);
+
+    if (business.entityType === 'PVT_LTD') {
+      return (
+        equityAccounts.find((account) => account.code === '3200') ||
+        equityAccounts.find((account) => /retained earnings/i.test(account.name)) ||
+        equityAccounts.find((account) => /accumulated profit|unappropriated profit/i.test(account.name)) ||
+        equityAccounts[0] ||
+        null
+      );
+    }
+
+    return (
+      equityAccounts.find((account) => account.code === '3000') ||
+      equityAccounts.find((account) => /owner capital/i.test(account.name)) ||
+      equityAccounts.find((account) => /capital/i.test(account.name)) ||
+      equityAccounts[0] ||
+      null
+    );
+  }
+
+  private async repairNextPeriodOpeningBalances(
+    userId: string,
+    business: Business,
+    closedPeriod: AccountingPeriod,
+  ) {
+    const nextDate = new Date(closedPeriod.endDate.getTime() + 1);
+
+    if (nextDate > new Date()) {
+      return {
+        message: 'Next period is in the future, so opening balances were not created yet.',
+      };
+    }
+
+    const nextPeriod = await this.getOrCreatePeriodForDate(userId, business, nextDate);
+
+    return this.repairOpeningBalances(userId, business.id, nextPeriod.id, true);
   }
 
   private normalizeOpeningRows(rows: OpeningBalanceRowDto[]) {
@@ -1014,6 +1315,14 @@ export class PeriodsService {
     businessId: string,
     currentPeriodStartDate: Date,
   ) {
+    const business = await this.prisma.business.findUnique({
+      where: { id: businessId },
+    });
+
+    if (!business) {
+      return { closedCount: 0, closed: [], failed: [] };
+    }
+
     const previousPeriods = await this.prisma.accountingPeriod.findMany({
       where: {
         businessId,
@@ -1027,36 +1336,66 @@ export class PeriodsService {
     });
 
     const closed = [];
+    const failed = [];
 
     for (const period of previousPeriods) {
-      const updated = await this.prisma.accountingPeriod.update({
-        where: {
-          id: period.id,
-        },
-        data: {
-          status: PeriodStatus.AUTO_CLOSED,
-          autoClosedAt: new Date(),
-          closedAt: new Date(),
-        },
-      });
+      try {
+        const closeResult = await this.postYearEndClosingEntry(
+          userId,
+          business,
+          period,
+          'Automatic year-end close before new period.',
+        );
 
-      await this.prisma.periodCloseLog.create({
-        data: {
-          businessId,
-          accountingPeriodId: period.id,
-          action: 'PERIOD_AUTO_CLOSED_ON_NEW_PERIOD',
-          performedById: userId,
-          beforeJson: this.jsonSafe(period),
-          afterJson: this.jsonSafe(updated),
-        },
-      });
+        const updated = await this.prisma.accountingPeriod.update({
+          where: { id: period.id },
+          data: {
+            status: PeriodStatus.AUTO_CLOSED,
+            autoClosedAt: new Date(),
+            closedAt: new Date(),
+          },
+        });
 
-      closed.push(this.serializePeriod(updated));
+        await this.prisma.periodCloseLog.create({
+          data: {
+            businessId,
+            accountingPeriodId: period.id,
+            action: 'PERIOD_AUTO_CLOSED_ON_NEW_PERIOD',
+            performedById: userId,
+            beforeJson: this.jsonSafe(period),
+            afterJson: this.jsonSafe({
+              period: updated,
+              closeResult,
+            }),
+          },
+        });
+
+        closed.push(this.serializePeriod(updated));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Auto-close failed.';
+
+        await this.prisma.periodCloseLog.create({
+          data: {
+            businessId,
+            accountingPeriodId: period.id,
+            action: 'PERIOD_AUTO_CLOSE_FAILED',
+            performedById: userId,
+            reason: message,
+            beforeJson: this.jsonSafe(period),
+          },
+        });
+
+        failed.push({
+          period: this.serializePeriod(period),
+          message,
+        });
+      }
     }
 
     return {
       closedCount: closed.length,
       closed,
+      failed,
     };
   }
 
@@ -1066,9 +1405,7 @@ export class PeriodsService {
         businessId: business.id,
         isActive: true,
       },
-      orderBy: {
-        code: 'asc',
-      },
+      orderBy: { code: 'asc' },
     });
 
     const lines = await this.prisma.journalLine.findMany({
@@ -1118,12 +1455,7 @@ export class PeriodsService {
     const netProfit = incomeBalance - expenseBalance;
 
     if (Math.abs(netProfit) >= 0.01) {
-      const equityAccount =
-        business.entityType === 'PVT_LTD'
-          ? accounts.find((account) => account.code === '3200') ||
-            accounts.find((account) => /retained earnings/i.test(account.name))
-          : accounts.find((account) => account.code === '3000') ||
-            accounts.find((account) => /owner capital/i.test(account.name));
+      const equityAccount = this.findProfitCloseAccount(business, accounts);
 
       if (equityAccount) {
         permanentBalances.set(
@@ -1186,14 +1518,8 @@ export class PeriodsService {
         businessId,
         accountingPeriodId: periodId,
       },
-      include: {
-        account: true,
-      },
-      orderBy: {
-        account: {
-          code: 'asc',
-        },
-      },
+      include: { account: true },
+      orderBy: { account: { code: 'asc' } },
     });
 
     const totalDebit = rows.reduce((sum, row) => sum + Number(row.debit || 0), 0);
@@ -1216,7 +1542,7 @@ export class PeriodsService {
   }
 
   private signedAmount(type: AccountType, debit: number, credit: number) {
-    if (type === 'ASSET' || type === 'EXPENSE') {
+    if (type === AccountType.ASSET || type === AccountType.EXPENSE) {
       return debit - credit;
     }
 
@@ -1225,13 +1551,10 @@ export class PeriodsService {
 
   private debitCredit(type: AccountType, signedBalance: number) {
     if (Math.abs(signedBalance) < 0.01) {
-      return {
-        debit: 0,
-        credit: 0,
-      };
+      return { debit: 0, credit: 0 };
     }
 
-    const normalDebit = type === 'ASSET' || type === 'EXPENSE';
+    const normalDebit = type === AccountType.ASSET || type === AccountType.EXPENSE;
 
     if (normalDebit) {
       return signedBalance >= 0
@@ -1307,12 +1630,8 @@ export class PeriodsService {
 
   private async isAhmad(userId: string) {
     const user = await this.prisma.user.findUnique({
-      where: {
-        id: userId,
-      },
-      select: {
-        email: true,
-      },
+      where: { id: userId },
+      select: { email: true },
     });
 
     return user?.email?.toLowerCase().trim() === AHMAD_EMAIL;
@@ -1322,7 +1641,7 @@ export class PeriodsService {
     const allowed = await this.isAhmad(userId);
 
     if (!allowed) {
-      throw new ForbiddenException('Only Ahmad Arif can reopen or final-close previous periods.');
+      throw new ForbiddenException('Only Ahmad Arif can reopen, year-end close, or final-close periods.');
     }
   }
 
