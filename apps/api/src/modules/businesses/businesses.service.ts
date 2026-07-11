@@ -235,6 +235,75 @@ export class BusinessesService {
     return business;
   }
 
+  async archiveClientBusiness(userId: string, businessId: string) {
+    const membership = await this.ensureFirmUser(userId);
+
+    const business = await this.prisma.business.findFirst({
+      where: {
+        id: businessId,
+        organizationId: membership.organizationId,
+      },
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        organizationId: true,
+      },
+    });
+
+    if (!business) {
+      throw new NotFoundException('Client company not found in ProBiz Consultants.');
+    }
+
+    if (business.status !== 'active') {
+      throw new BadRequestException('Client company is already archived.');
+    }
+
+    const updated = await this.prisma.business.update({
+      where: {
+        id: businessId,
+      },
+      data: {
+        status: 'inactive',
+      },
+      include: {
+        organization: {
+          select: {
+            id: true,
+            name: true,
+            type: true,
+            clientSlotLimit: true,
+            firmUserLimit: true,
+          },
+        },
+      },
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        organizationId: membership.organizationId,
+        businessId,
+        userId,
+        action: 'CLIENT_BUSINESS_ARCHIVED',
+        entityType: 'Business',
+        entityId: businessId,
+        beforeJson: {
+          name: business.name,
+          status: business.status,
+        },
+        afterJson: {
+          name: updated.name,
+          status: updated.status,
+        },
+      },
+    });
+
+    return {
+      message: `${updated.name} has been archived.`,
+      business: updated,
+    };
+  }
+
   async inviteClientUser(userId: string, businessId: string, email: string, role = 'CLIENT_OWNER') {
     await this.assertCanGrantClientUserAccess(userId, businessId);
 
