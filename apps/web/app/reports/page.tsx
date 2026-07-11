@@ -1,182 +1,466 @@
 'use client';
 
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { AppShell } from '@/components/AppShell';
 import { ClientRequired } from '@/components/ClientRequired';
 import { Button, Card, Input, Select } from '@/components/Card';
-import { api, downloadBase64File, getBusinessId, money } from '@/lib/api';
+import { api, downloadBase64File, getBusinessId } from '@/lib/api';
 
-type Account = { id: string; code: string; name: string; type: string };
-type PL = { rows: { code: string; account: string; type: string; amount: number }[]; totalIncome: number; totalExpenses: number; netProfit: number };
-type Trial = { rows: { code: string; account: string; type: string; debit: number; credit: number; balance: number }[]; totalDebit: number; totalCredit: number };
-type Analysis = { summary: string; keyFindings: string[]; risks: string[]; suggestions: string[]; accountantNotes: string[]; safetyNote: string };
+type Account = {
+  id: string;
+  code: string;
+  name: string;
+  type: string;
+};
 
-type ExportResponse = { filename: string; mimeType: string; contentBase64: string; warning?: string };
+type PreviewColumn = {
+  key: string;
+  label: string;
+  align?: 'left' | 'right' | 'center';
+};
+
+type PreviewSection = {
+  title: string;
+  columns: PreviewColumn[];
+  rows: Record<string, any>[];
+  totals?: Record<string, any>;
+};
+
+type ReportPreview = {
+  reportType: string;
+  title: string;
+  subtitle: string;
+  clientName: string;
+  generatedAt: string;
+  timezone: string;
+  filters: Record<string, any>;
+  sections: PreviewSection[];
+};
+
+type ExportResponse = {
+  filename: string;
+  mimeType: string;
+  contentBase64: string;
+  warning?: string;
+};
 
 const reportTypes = [
   ['profit-loss', 'Profit & Loss'],
-  ['balance-sheet', 'Balance Sheet'],
+  ['balance-sheet', 'Balance Sheet / Statement of Financial Position'],
   ['trial-balance', 'Trial Balance'],
   ['general-ledger', 'General Ledger'],
-  ['debtors', 'Debtors Report'],
-  ['creditors', 'Creditors Report'],
   ['sales', 'Sales Report'],
   ['purchases', 'Purchase Report'],
   ['expenses', 'Expense Report'],
   ['cash-bank', 'Cash & Bank Report'],
   ['tax-summary', 'Tax Summary'],
   ['missing-documents', 'Missing Documents'],
-  ['account-usage', 'Account Head Usage'],
-  ['monthly-closing', 'Monthly Closing'],
 ];
 
+function defaultStartDate() {
+  const today = new Date();
+  return new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
+}
+
+function todayDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function money(value: any) {
+  if (typeof value !== 'number') return value || '-';
+
+  return value.toLocaleString('en-PK', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  });
+}
+
+function isNumberValue(value: any) {
+  return typeof value === 'number';
+}
+
 export default function ReportsPage() {
-  const [pl, setPl] = useState<PL | null>(null);
-  const [trial, setTrial] = useState<Trial | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [analysis, setAnalysis] = useState<Analysis | null>(null);
-  const [preview, setPreview] = useState<any>(null);
+  const [preview, setPreview] = useState<ReportPreview | null>(null);
   const [message, setMessage] = useState('');
-  const [filters, setFilters] = useState({ reportType: 'profit-loss', format: 'excel', from: '', to: '', accountCodes: [] as string[] });
+  const [error, setError] = useState('');
+  const [loadingAccounts, setLoadingAccounts] = useState(true);
+  const [loadingPreview, setLoadingPreview] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [requestingExport, setRequestingExport] = useState(false);
 
-  async function load() {
+  const [filters, setFilters] = useState({
+    reportType: 'profit-loss',
+    startDate: defaultStartDate(),
+    endDate: todayDate(),
+    accountId: '',
+    accountCodes: [] as string[],
+    includeZeroBalances: false,
+    showMovementColumns: true,
+    missingDocumentsOnly: false,
+    format: 'preview',
+  });
+
+  const needsAccount = filters.reportType === 'general-ledger';
+
+  const selectedReportLabel = useMemo(() => {
+    return reportTypes.find(([value]) => value === filters.reportType)?.[1] || 'Report';
+  }, [filters.reportType]);
+
+  async function loadAccounts() {
     const businessId = getBusinessId();
+
     if (!businessId) return;
-    setAccounts(await api<Account[]>(`/accounting/businesses/${businessId}/accounts`));
-    setPl(await api<PL>(`/accounting/businesses/${businessId}/reports/profit-loss`));
-    setTrial(await api<Trial>(`/accounting/businesses/${businessId}/reports/trial-balance`));
+
+    setError('');
+
+    try {
+      const data = await api<Account[]>(`/accounting/businesses/${businessId}/accounts`);
+      setAccounts(data || []);
+
+      if (data?.length && !filters.accountId) {
+        setFilters((current) => ({
+          ...current,
+          accountId: data[0].id,
+        }));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load accounts');
+    } finally {
+      setLoadingAccounts(false);
+    }
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    loadAccounts();
+  }, []);
 
-  async function analyze() {
-    const businessId = getBusinessId();
-    if (!businessId) return;
-    setAnalysis(await api<Analysis>(`/ai/businesses/${businessId}/analyze-report`, { method: 'POST', body: JSON.stringify({ reportType: filters.reportType }) }));
-  }
+  async function previewReport(e?: FormEvent) {
+    e?.preventDefault();
 
-  async function previewReport(e: FormEvent) {
-    e.preventDefault();
+    if (loadingPreview) return;
+
     const businessId = getBusinessId();
+
     if (!businessId) return;
-    const data = await api<any>(`/accounting/businesses/${businessId}/reports/preview`, { method: 'POST', body: JSON.stringify(filters) });
-    setPreview(data);
-    setMessage('Report preview generated with selected filters.');
+
+    setMessage('');
+    setError('');
+    setLoadingPreview(true);
+
+    try {
+      const data = await api<ReportPreview>(`/accounting/businesses/${businessId}/reporting/preview`, {
+        method: 'POST',
+        body: JSON.stringify(filters),
+      });
+
+      setPreview(data);
+      setMessage('Report preview generated.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not generate report preview');
+    } finally {
+      setLoadingPreview(false);
+    }
   }
 
   async function exportReport() {
+    if (exporting) return;
+
     const businessId = getBusinessId();
+
     if (!businessId) return;
+
+    setMessage('');
+    setError('');
+    setExporting(true);
+
     try {
-      const result = await api<ExportResponse>(`/accounting/businesses/${businessId}/reports/export`, { method: 'POST', body: JSON.stringify(filters) });
+      const result = await api<ExportResponse>(`/accounting/businesses/${businessId}/reporting/export`, {
+        method: 'POST',
+        body: JSON.stringify({
+          ...filters,
+          format: 'csv',
+        }),
+      });
+
       downloadBase64File(result.filename, result.mimeType, result.contentBase64);
       setMessage(result.warning || 'Report exported.');
-    } catch (error) {
-      setMessage((error as Error).message + ' Use Request Export Approval if you are a client user.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not export report');
+    } finally {
+      setExporting(false);
     }
   }
 
   async function requestExport() {
+    if (requestingExport) return;
+
     const businessId = getBusinessId();
+
     if (!businessId) return;
-    await api(`/accounting/businesses/${businessId}/reports/request-export`, { method: 'POST', body: JSON.stringify({ ...filters, reason: 'Client requested report from Report Builder.' }) });
-    setMessage('Report export request sent to firm for approval.');
+
+    setMessage('');
+    setError('');
+    setRequestingExport(true);
+
+    try {
+      await api(`/accounting/businesses/${businessId}/reporting/request-export`, {
+        method: 'POST',
+        body: JSON.stringify({
+          ...filters,
+          format: 'csv',
+          reason: 'Client requested report from Report Builder.',
+        }),
+      });
+
+      setMessage('Report export request sent to firm for approval.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not request export approval');
+    } finally {
+      setRequestingExport(false);
+    }
   }
 
   function toggleAccount(code: string) {
-    setFilters((f) => ({ ...f, accountCodes: f.accountCodes.includes(code) ? f.accountCodes.filter((x) => x !== code) : [...f.accountCodes, code] }));
+    setFilters((current) => ({
+      ...current,
+      accountCodes: current.accountCodes.includes(code)
+        ? current.accountCodes.filter((item) => item !== code)
+        : [...current.accountCodes, code],
+    }));
   }
 
   return (
     <AppShell>
-      <ClientRequired>
-        <div className="mb-6 flex flex-col justify-between gap-4 md:flex-row md:items-center">
-          <div>
-            <h1 className="text-3xl font-bold">Report Builder</h1>
-            <p className="text-slate-600">Filter by period, heads, report type, and export only when permission allows.</p>
+      <ClientRequired title="Select a client to open Report Builder">
+        <div className="mx-auto max-w-7xl space-y-6 px-4 py-8">
+          <div className="rounded-3xl bg-slate-950 p-6 text-white shadow-sm">
+            <p className="text-sm font-semibold uppercase tracking-wide text-emerald-300">
+              Report builder
+            </p>
+            <h1 className="mt-2 text-3xl font-bold">Reports</h1>
+            <p className="mt-2 max-w-3xl text-sm text-slate-300">
+              Build reports with proper start and end dates. Balance Sheet uses the end date as
+              the as-of date, while still respecting the selected start date.
+            </p>
           </div>
-          <Button onClick={analyze}>Ask AI to Analyze</Button>
-        </div>
 
-        {message && <p className="mb-4 rounded-2xl bg-emerald-50 p-3 text-sm text-emerald-700">{message}</p>}
+          {error && (
+            <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {error}
+            </div>
+          )}
 
-        <div className="grid gap-4 xl:grid-cols-[420px_1fr]">
-          <Card>
-            <h2 className="mb-4 text-xl font-bold">Filters & Export</h2>
-            <form onSubmit={previewReport} className="space-y-3">
-              <Select value={filters.reportType} onChange={(e) => setFilters({ ...filters, reportType: e.target.value })}>
-                {reportTypes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-              </Select>
-              <div className="grid grid-cols-2 gap-3">
-                <Input type="date" value={filters.from} onChange={(e) => setFilters({ ...filters, from: e.target.value })} />
-                <Input type="date" value={filters.to} onChange={(e) => setFilters({ ...filters, to: e.target.value })} />
-              </div>
-              <div className="rounded-2xl border bg-slate-50 p-3">
-                <p className="mb-2 text-sm font-semibold">Specific heads</p>
-                <div className="max-h-52 space-y-1 overflow-auto text-sm">
-                  {accounts.map((a) => (
-                    <label key={a.id} className="flex items-center gap-2 rounded-xl px-2 py-1 hover:bg-white">
-                      <input type="checkbox" checked={filters.accountCodes.includes(a.code)} onChange={() => toggleAccount(a.code)} />
-                      <span>{a.code} — {a.name}</span>
-                    </label>
-                  ))}
+          {message && (
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+              {message}
+            </div>
+          )}
+
+          <div className="grid gap-6 lg:grid-cols-[0.9fr_1.5fr]">
+            <Card>
+              <h2 className="text-xl font-bold text-slate-900">Filters</h2>
+              <p className="mt-1 text-sm text-slate-500">
+                All reports use both a start date and an end date.
+              </p>
+
+              <form onSubmit={previewReport} className="mt-5 space-y-4">
+                <div>
+                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Report type
+                  </label>
+                  <Select
+                    value={filters.reportType}
+                    onChange={(e) =>
+                      setFilters({
+                        ...filters,
+                        reportType: e.target.value,
+                      })
+                    }
+                  >
+                    {reportTypes.map(([value, label]) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))}
+                  </Select>
                 </div>
-              </div>
-              <Select value={filters.format} onChange={(e) => setFilters({ ...filters, format: e.target.value })}>
-                <option value="excel">Excel-compatible CSV</option>
-                <option value="pdf">PDF-ready HTML</option>
-                <option value="word">Word-readable DOC</option>
-                <option value="json">JSON backup</option>
-              </Select>
-              <div className="grid grid-cols-2 gap-2">
-                <Button type="submit">Preview</Button>
-                <Button type="button" onClick={exportReport} className="bg-slate-900 hover:bg-slate-800">Export</Button>
-              </div>
-              <button type="button" onClick={requestExport} className="w-full rounded-2xl border bg-white px-4 py-3 text-sm font-semibold hover:bg-slate-50">Request Export Approval</button>
-            </form>
-          </Card>
 
-          <div className="space-y-4">
-            {analysis && <Card className="border-emerald-100 bg-emerald-50/80">
-              <h2 className="mb-2 text-xl font-bold">AI Report Analysis</h2>
-              <p className="mb-3 whitespace-pre-line">{analysis.summary}</p>
-              <div className="grid gap-4 md:grid-cols-3">
-                <List title="Key findings" items={analysis.keyFindings} />
-                <List title="Risks" items={analysis.risks} />
-                <List title="Suggestions" items={analysis.suggestions} />
-              </div>
-              <p className="mt-3 text-xs text-slate-500">{analysis.safetyNote}</p>
-            </Card>}
-
-            {preview && <Card>
-              <h2 className="mb-3 text-xl font-bold">Preview: {preview.reportType}</h2>
-              <pre className="max-h-[420px] overflow-auto rounded-2xl bg-slate-950 p-4 text-xs text-slate-100">{JSON.stringify(preview, null, 2)}</pre>
-            </Card>}
-
-            <div className="grid gap-4 lg:grid-cols-2">
-              <Card>
-                <h2 className="mb-4 text-xl font-bold">Profit & Loss</h2>
-                {!pl && <p>Loading...</p>}
-                {pl && <>
-                  <div className="mb-4 grid gap-3 md:grid-cols-3">
-                    <div className="rounded-2xl bg-slate-50 p-4"><p className="text-sm text-slate-500">Income</p><b>{money(pl.totalIncome)}</b></div>
-                    <div className="rounded-2xl bg-slate-50 p-4"><p className="text-sm text-slate-500">Expenses</p><b>{money(pl.totalExpenses)}</b></div>
-                    <div className="rounded-2xl bg-emerald-50 p-4"><p className="text-sm text-slate-500">Net profit</p><b>{money(pl.netProfit)}</b></div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Start date
+                    </label>
+                    <Input
+                      type="date"
+                      value={filters.startDate}
+                      onChange={(e) =>
+                        setFilters({
+                          ...filters,
+                          startDate: e.target.value,
+                        })
+                      }
+                    />
                   </div>
-                  <MiniTable rows={pl.rows.map((r) => [r.code, r.account, r.type, money(r.amount)])} headers={['Code', 'Account', 'Type', 'Amount']} />
-                </>}
-              </Card>
-              <Card>
-                <h2 className="mb-4 text-xl font-bold">Trial Balance</h2>
-                {!trial && <p>Loading...</p>}
-                {trial && <>
-                  <div className="mb-4 grid gap-3 md:grid-cols-2">
-                    <div className="rounded-2xl bg-slate-50 p-4"><p className="text-sm text-slate-500">Total debit</p><b>{money(trial.totalDebit)}</b></div>
-                    <div className="rounded-2xl bg-slate-50 p-4"><p className="text-sm text-slate-500">Total credit</p><b>{money(trial.totalCredit)}</b></div>
+
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      End date / As-of date
+                    </label>
+                    <Input
+                      type="date"
+                      value={filters.endDate}
+                      onChange={(e) =>
+                        setFilters({
+                          ...filters,
+                          endDate: e.target.value,
+                        })
+                      }
+                    />
                   </div>
-                  <MiniTable rows={trial.rows.map((r) => [r.code, r.account, r.type, money(r.balance)])} headers={['Code', 'Account', 'Type', 'Balance']} />
-                </>}
-              </Card>
+                </div>
+
+                {filters.reportType === 'balance-sheet' && (
+                  <div className="rounded-2xl bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">
+                    For Balance Sheet, the end date is the as-of date. The start date controls the
+                    calculation base and period movement.
+                  </div>
+                )}
+
+                {filters.reportType === 'trial-balance' && (
+                  <div className="rounded-2xl bg-emerald-50 px-4 py-3 text-xs leading-5 text-emerald-800">
+                    Trial Balance shows opening balances, period movement, and closing balances
+                    between the selected dates.
+                  </div>
+                )}
+
+                {needsAccount && (
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Account for General Ledger
+                    </label>
+                    <Select
+                      value={filters.accountId}
+                      onChange={(e) =>
+                        setFilters({
+                          ...filters,
+                          accountId: e.target.value,
+                        })
+                      }
+                      disabled={loadingAccounts || !accounts.length}
+                    >
+                      {accounts.map((account) => (
+                        <option key={account.id} value={account.id}>
+                          {account.code} — {account.name} ({account.type})
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  <label className="flex items-center gap-2 rounded-2xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={filters.includeZeroBalances}
+                      onChange={(e) =>
+                        setFilters({
+                          ...filters,
+                          includeZeroBalances: e.target.checked,
+                        })
+                      }
+                    />
+                    Include zero-balance accounts
+                  </label>
+
+                  <label className="flex items-center gap-2 rounded-2xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={filters.missingDocumentsOnly}
+                      onChange={(e) =>
+                        setFilters({
+                          ...filters,
+                          missingDocumentsOnly: e.target.checked,
+                        })
+                      }
+                    />
+                    Missing documents only
+                  </label>
+                </div>
+
+                <div>
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Specific heads optional
+                  </p>
+
+                  <div className="max-h-48 space-y-2 overflow-y-auto rounded-2xl border border-slate-200 p-3">
+                    {accounts.map((account) => (
+                      <label
+                        key={account.id}
+                        className="flex items-start gap-2 text-xs text-slate-700"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={filters.accountCodes.includes(account.code)}
+                          onChange={() => toggleAccount(account.code)}
+                          className="mt-0.5"
+                        />
+                        <span>
+                          <b>{account.code}</b> — {account.name}
+                        </span>
+                      </label>
+                    ))}
+
+                    {!accounts.length && (
+                      <p className="text-xs text-slate-500">No accounts loaded yet.</p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-3">
+                  <Button
+                    type="submit"
+                    disabled={loadingPreview}
+                    className="disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {loadingPreview ? 'Previewing...' : 'Preview'}
+                  </Button>
+
+                  <button
+                    type="button"
+                    onClick={exportReport}
+                    disabled={exporting}
+                    className="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {exporting ? 'Exporting...' : 'Export CSV'}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={requestExport}
+                    disabled={requestingExport}
+                    className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {requestingExport ? 'Requesting...' : 'Request Approval'}
+                  </button>
+                </div>
+              </form>
+            </Card>
+
+            <div className="space-y-6">
+              {!preview && (
+                <Card>
+                  <h2 className="text-xl font-bold text-slate-900">Preview</h2>
+                  <p className="mt-2 text-sm text-slate-500">
+                    Select filters and click Preview. The report will appear as spreadsheet-style
+                    tables here instead of JSON.
+                  </p>
+                </Card>
+              )}
+
+              {preview && (
+                <ReportPreviewCard preview={preview} selectedReportLabel={selectedReportLabel} />
+              )}
             </div>
           </div>
         </div>
@@ -185,10 +469,96 @@ export default function ReportsPage() {
   );
 }
 
-function List({ title, items }: { title: string; items: string[] }) {
-  return <div><b>{title}</b><ul className="mt-2 list-disc pl-5 text-sm">{items?.map((item, i) => <li key={i}>{item}</li>)}</ul></div>;
-}
+function ReportPreviewCard({
+  preview,
+  selectedReportLabel,
+}: {
+  preview: ReportPreview;
+  selectedReportLabel: string;
+}) {
+  return (
+    <Card>
+      <div className="mb-5 border-b border-slate-200 pb-4">
+        <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+          {selectedReportLabel}
+        </p>
+        <h2 className="mt-1 text-2xl font-bold text-slate-900">{preview.title}</h2>
+        <p className="mt-1 text-sm font-semibold text-slate-700">{preview.clientName}</p>
+        <p className="mt-1 text-sm text-slate-500">{preview.subtitle}</p>
+        <p className="mt-1 text-xs text-slate-400">
+          Generated {preview.generatedAt} • {preview.timezone}
+        </p>
+      </div>
 
-function MiniTable({ headers, rows }: { headers: string[]; rows: string[][] }) {
-  return <div className="max-h-96 overflow-auto rounded-2xl border"><table className="w-full text-left text-sm"><thead className="bg-slate-50"><tr>{headers.map((h) => <th key={h} className="p-3">{h}</th>)}</tr></thead><tbody>{rows.map((row, i) => <tr key={i} className="border-t">{row.map((cell, j) => <td key={j} className="p-3">{cell}</td>)}</tr>)}</tbody></table></div>;
+      <div className="space-y-8">
+        {preview.sections.map((section) => (
+          <div key={section.title}>
+            <h3 className="mb-3 text-lg font-bold text-slate-900">{section.title}</h3>
+
+            <div className="overflow-x-auto rounded-2xl border border-slate-200">
+              <table className="min-w-full text-left text-sm">
+                <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                  <tr>
+                    {section.columns.map((column) => (
+                      <th
+                        key={column.key}
+                        className={`px-4 py-3 ${
+                          column.align === 'right' ? 'text-right' : 'text-left'
+                        }`}
+                      >
+                        {column.label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+
+                <tbody className="divide-y divide-slate-100">
+                  {section.rows.map((row, index) => (
+                    <tr key={index} className="bg-white">
+                      {section.columns.map((column) => (
+                        <td
+                          key={column.key}
+                          className={`px-4 py-3 ${
+                            column.align === 'right' || isNumberValue(row[column.key])
+                              ? 'text-right font-medium'
+                              : 'text-left'
+                          }`}
+                        >
+                          {money(row[column.key])}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+
+                  {!section.rows.length && (
+                    <tr>
+                      <td
+                        colSpan={section.columns.length}
+                        className="px-4 py-8 text-center text-sm text-slate-500"
+                      >
+                        No rows for this report and date range.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {section.totals && (
+              <div className="mt-3 grid gap-3 md:grid-cols-3">
+                {Object.entries(section.totals).map(([key, value]) => (
+                  <div key={key} className="rounded-2xl bg-slate-50 px-4 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      {key.replace(/([A-Z])/g, ' $1')}
+                    </p>
+                    <p className="mt-1 text-lg font-bold text-slate-900">{money(value)}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
 }
