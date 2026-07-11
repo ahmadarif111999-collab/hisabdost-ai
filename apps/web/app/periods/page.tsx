@@ -48,6 +48,7 @@ type Dashboard = {
   permissions: {
     canReopenPreviousPeriod: boolean;
     canFinalClosePeriod: boolean;
+    canYearEndClose?: boolean;
   };
 };
 
@@ -166,6 +167,41 @@ export default function PeriodsPage() {
     }
   }
 
+  async function yearEndClose(period: Period) {
+    if (workingPeriodId) return;
+
+    const businessId = getBusinessId();
+
+    if (!businessId) return;
+
+    const closeReason = window.prompt(
+      `Run year-end close for ${period.label}? This will close income and expense accounts into equity/capital and repair next-period opening balances. Reason optional:`,
+      'Year-end close from Periods page.',
+    );
+
+    if (closeReason === null) return;
+
+    setMessage('');
+    setError('');
+    setWorkingPeriodId(period.id);
+
+    try {
+      await api(`/periods/businesses/${businessId}/periods/${period.id}/year-end-close`, {
+        method: 'POST',
+        body: JSON.stringify({
+          reason: closeReason || 'Year-end close from Periods page.',
+        }),
+      });
+
+      setMessage(`${period.label} year-end close completed.`);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not run year-end close');
+    } finally {
+      setWorkingPeriodId(null);
+    }
+  }
+
   async function reopenPeriod(period: Period) {
     if (workingPeriodId) return;
 
@@ -208,7 +244,7 @@ export default function PeriodsPage() {
     if (!businessId) return;
 
     const ok = window.confirm(
-      `Final-close ${period.label}? Only Ahmad Arif can reopen/final-close periods.`,
+      `Final-close ${period.label}? This will also post/update the year-end closing entry before final close.`,
     );
 
     if (!ok) return;
@@ -258,8 +294,8 @@ export default function PeriodsPage() {
             </p>
             <h1 className="mt-2 text-3xl font-bold">Accounting Periods</h1>
             <p className="mt-2 max-w-3xl text-sm text-slate-300">
-              Each client has its own fiscal calendar. When a new period starts, previous open
-              periods are automatically closed and opening balances are repaired for the new period.
+              Each client has its own fiscal calendar. Year-end close transfers profit/loss into
+              equity/capital, locks the period, and repairs next-period opening balances.
             </p>
           </div>
 
@@ -341,8 +377,8 @@ export default function PeriodsPage() {
                   <Card>
                     <h2 className="text-xl font-bold text-slate-900">Current opening balances</h2>
                     <p className="mt-1 text-sm text-slate-500">
-                      These balances are calculated from prior-period permanent accounts and profit
-                      closed into equity/capital.
+                      These balances are calculated from prior-period permanent accounts and
+                      profit/loss closed into equity/capital.
                     </p>
 
                     <div className="mt-4 grid gap-3">
@@ -356,8 +392,7 @@ export default function PeriodsPage() {
                 <Card>
                   <h2 className="text-xl font-bold text-slate-900">Accounting periods</h2>
                   <p className="mt-1 text-sm text-slate-500">
-                    Previous periods are auto-closed when a new current period is created. Reopening
-                    is Ahmad-only.
+                    Run year-end close before final close. Reopening and final close are Ahmad-only.
                   </p>
 
                   <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200">
@@ -395,7 +430,7 @@ export default function PeriodsPage() {
                             </td>
 
                             <td className="px-4 py-3">
-                              <div className="flex justify-end gap-2">
+                              <div className="flex flex-wrap justify-end gap-2">
                                 <button
                                   type="button"
                                   onClick={() => repairOpeningBalances(period)}
@@ -404,6 +439,18 @@ export default function PeriodsPage() {
                                 >
                                   {repairingPeriodId === period.id ? 'Repairing...' : 'Repair OB'}
                                 </button>
+
+                                {data.permissions.canYearEndClose &&
+                                  period.status !== 'FINAL_CLOSED' && (
+                                    <button
+                                      type="button"
+                                      onClick={() => yearEndClose(period)}
+                                      disabled={workingPeriodId === period.id}
+                                      className="rounded-xl border border-emerald-200 px-3 py-2 text-xs font-semibold text-emerald-800 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                    >
+                                      Year-End Close
+                                    </button>
+                                  )}
 
                                 {data.permissions.canReopenPreviousPeriod &&
                                   period.status !== 'OPEN' &&
