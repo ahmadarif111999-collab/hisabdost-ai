@@ -2,6 +2,14 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { AccountType } from '@prisma/client';
 import { BusinessesService } from '../businesses/businesses.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  cleanAccountingNarration,
+  displayJournalEntryNo,
+  formatPakistanDate,
+  formatPakistanDateTime,
+  normalBalanceLabel,
+  sourceTypeLabel,
+} from '../../common/accounting-format.util';
 
 type ReportType =
   | 'profit-loss'
@@ -26,6 +34,11 @@ type ReportFilterDto = {
   showMovementColumns?: boolean;
   missingDocumentsOnly?: boolean;
   format?: 'preview' | 'csv' | 'excel' | 'xlsx' | 'pdf' | 'json';
+  reason?: string;
+};
+
+type NormalizedReportFilter = Required<Omit<ReportFilterDto, 'reason'>> & {
+  reason?: string;
 };
 
 type PreviewColumn = {
@@ -91,7 +104,6 @@ export class AccountingReportingService {
   async export(userId: string, businessId: string, dto: ReportFilterDto) {
     const preview = await this.preview(userId, businessId, dto);
     const csv = this.previewToCsv(preview);
-
     const business = await this.businesses.getAccessibleBusiness(userId, businessId);
 
     await this.prisma.reportExportLog.create({
@@ -118,7 +130,7 @@ export class AccountingReportingService {
     };
   }
 
-  async requestExport(userId: string, businessId: string, dto: ReportFilterDto & { reason?: string }) {
+  async requestExport(userId: string, businessId: string, dto: ReportFilterDto) {
     const access = await this.businesses.getUserAccessForBusiness(userId, businessId);
 
     const request = await this.prisma.reportExportRequest.create({
@@ -143,8 +155,13 @@ export class AccountingReportingService {
     };
   }
 
-  private async profitLossPreview(clientName: string, businessId: string, filters: Required<ReportFilterDto>) {
+  private async profitLossPreview(
+    clientName: string,
+    businessId: string,
+    filters: NormalizedReportFilter,
+  ) {
     const balances = await this.accountBalances(businessId, filters.startDate, filters.endDate);
+
     const rows = balances
       .filter((row) => row.type === 'INCOME' || row.type === 'EXPENSE')
       .filter((row) => row.periodAmount !== 0 || filters.includeZeroBalances)
@@ -152,7 +169,7 @@ export class AccountingReportingService {
         code: row.code,
         account: row.name,
         type: row.type,
-        amount: row.type === 'INCOME' ? row.periodAmount : -row.periodAmount,
+        amount: row.type === 'INCOME' ? row.periodAmount : Math.abs(row.periodAmount),
       }));
 
     const totalIncome = rows
@@ -161,7 +178,7 @@ export class AccountingReportingService {
 
     const totalExpenses = rows
       .filter((row) => row.type === 'EXPENSE')
-      .reduce((sum, row) => sum + Math.abs(row.amount), 0);
+      .reduce((sum, row) => sum + row.amount, 0);
 
     return this.basePreview({
       reportType: 'profit-loss',
@@ -170,7 +187,7 @@ export class AccountingReportingService {
       filters,
       sections: [
         {
-          title: 'Profit & Loss',
+          title: 'Income and Expenses',
           columns: [
             { key: 'code', label: 'Code' },
             { key: 'account', label: 'Account' },
@@ -188,7 +205,11 @@ export class AccountingReportingService {
     });
   }
 
-  private async balanceSheetPreview(clientName: string, businessId: string, filters: Required<ReportFilterDto>) {
+  private async balanceSheetPreview(
+    clientName: string,
+    businessId: string,
+    filters: NormalizedReportFilter,
+  ) {
     const balances = await this.accountBalances(businessId, filters.startDate, filters.endDate);
 
     const rows = balances
@@ -198,7 +219,8 @@ export class AccountingReportingService {
         code: row.code,
         account: row.name,
         type: row.type,
-        balance: row.closingBalance,
+        balance: Math.abs(row.closingBalance),
+        side: normalBalanceLabel(row.type, row.closingBalance),
       }));
 
     const totalAssets = rows
@@ -218,7 +240,7 @@ export class AccountingReportingService {
       title: 'Statement of Financial Position',
       clientName,
       filters,
-      subtitle: `As at ${filters.endDate}. Reporting calculation starts from ${filters.startDate}.`,
+      subtitle: `As at ${formatPakistanDate(filters.endDate)}. Reporting calculation starts from ${formatPakistanDate(filters.startDate)}.`,
       sections: [
         {
           title: 'Assets, Liabilities and Equity',
@@ -227,24 +249,35 @@ export class AccountingReportingService {
             { key: 'account', label: 'Account' },
             { key: 'type', label: 'Type' },
             { key: 'balance', label: 'Balance', align: 'right' },
+            { key: 'side', label: 'Side' },
           ],
           rows,
           totals: {
             totalAssets,
             totalLiabilities,
             totalEquity,
-            check: totalAssets - (totalLiabilities + totalEquity),
+            balanceCheck: totalAssets - (totalLiabilities + totalEquity),
           },
         },
       ],
     });
   }
 
-  private async trialBalancePreview(clientName: string, businessId: string, filters: Required<ReportFilterDto>) {
+  private async trialBalancePreview(
+    clientName: string,
+    businessId: string,
+    filters: NormalizedReportFilter,
+  ) {
     const balances = await this.accountBalances(businessId, filters.startDate, filters.endDate);
 
     const rows = balances
-      .filter((row) => row.closingBalance !== 0 || row.periodDebit !== 0 || row.periodCredit !== 0 || filters.includeZeroBalances)
+      .filter(
+        (row) =>
+          row.closingBalance !== 0 ||
+          row.periodDebit !== 0 ||
+          row.periodCredit !== 0 ||
+          filters.includeZeroBalances,
+      )
       .map((row) => {
         const opening = this.debitCredit(row.type, row.openingBalance);
         const closing = this.debitCredit(row.type, row.closingBalance);
@@ -267,7 +300,7 @@ export class AccountingReportingService {
       title: 'Trial Balance',
       clientName,
       filters,
-      subtitle: `From ${filters.startDate} to ${filters.endDate}`,
+      subtitle: `From ${formatPakistanDate(filters.startDate)} to ${formatPakistanDate(filters.endDate)}`,
       sections: [
         {
           title: 'Opening, Movement and Closing',
@@ -296,7 +329,11 @@ export class AccountingReportingService {
     });
   }
 
-  private async generalLedgerPreview(clientName: string, businessId: string, filters: Required<ReportFilterDto>) {
+  private async generalLedgerPreview(
+    clientName: string,
+    businessId: string,
+    filters: NormalizedReportFilter,
+  ) {
     const accountIdOrCode = filters.accountId || filters.accountCode || filters.accountCodes?.[0];
 
     if (!accountIdOrCode) {
@@ -315,7 +352,13 @@ export class AccountingReportingService {
       throw new BadRequestException('Account not found for General Ledger.');
     }
 
-    const rows = await this.ledgerRows(businessId, account.id, account.type, filters.startDate, filters.endDate);
+    const rows = await this.ledgerRows(
+      businessId,
+      account.id,
+      account.type,
+      filters.startDate,
+      filters.endDate,
+    );
 
     return this.basePreview({
       reportType: 'general-ledger',
@@ -329,10 +372,12 @@ export class AccountingReportingService {
           columns: [
             { key: 'date', label: 'Date' },
             { key: 'entryNo', label: 'Entry No' },
+            { key: 'source', label: 'Source' },
             { key: 'narration', label: 'Narration' },
             { key: 'debit', label: 'Debit', align: 'right' },
             { key: 'credit', label: 'Credit', align: 'right' },
             { key: 'balance', label: 'Balance', align: 'right' },
+            { key: 'side', label: 'Side' },
           ],
           rows,
           totals: {
@@ -345,7 +390,11 @@ export class AccountingReportingService {
     });
   }
 
-  private async salesPreview(clientName: string, businessId: string, filters: Required<ReportFilterDto>) {
+  private async salesPreview(
+    clientName: string,
+    businessId: string,
+    filters: NormalizedReportFilter,
+  ) {
     const invoices = await this.prisma.invoice.findMany({
       where: {
         businessId,
@@ -360,7 +409,7 @@ export class AccountingReportingService {
     });
 
     const rows = invoices.map((invoice) => ({
-      date: this.formatDate(invoice.invoiceDate),
+      date: formatPakistanDate(invoice.invoiceDate),
       invoiceNumber: invoice.invoiceNumber,
       customer: invoice.customer?.name || '-',
       subtotal: Number(invoice.subtotal || 0),
@@ -400,18 +449,30 @@ export class AccountingReportingService {
     });
   }
 
-  private async purchasesPreview(clientName: string, businessId: string, filters: Required<ReportFilterDto>) {
-    return this.expenseLikePreview(clientName, businessId, filters, 'purchases', 'Purchase Report', ['purchase']);
+  private async purchasesPreview(
+    clientName: string,
+    businessId: string,
+    filters: NormalizedReportFilter,
+  ) {
+    return this.expenseLikePreview(clientName, businessId, filters, 'purchases', 'Purchase Report', [
+      'purchase',
+    ]);
   }
 
-  private async expensesPreview(clientName: string, businessId: string, filters: Required<ReportFilterDto>) {
-    return this.expenseLikePreview(clientName, businessId, filters, 'expenses', 'Expense Report', ['expense']);
+  private async expensesPreview(
+    clientName: string,
+    businessId: string,
+    filters: NormalizedReportFilter,
+  ) {
+    return this.expenseLikePreview(clientName, businessId, filters, 'expenses', 'Expense Report', [
+      'expense',
+    ]);
   }
 
   private async expenseLikePreview(
     clientName: string,
     businessId: string,
-    filters: Required<ReportFilterDto>,
+    filters: NormalizedReportFilter,
     reportType: ReportType,
     title: string,
     kinds: string[],
@@ -446,10 +507,10 @@ export class AccountingReportingService {
     const rows = expenses
       .filter((expense) => !filters.missingDocumentsOnly || !expense.documentId)
       .map((expense) => ({
-        date: this.formatDate(expense.expenseDate),
+        date: formatPakistanDate(expense.expenseDate),
         vendor: expense.vendor?.name || '-',
-        account: accountMap[expense.categoryAccountId]?.name || expense.categoryAccountId,
-        description: expense.description || '-',
+        account: accountMap[expense.categoryAccountId]?.name || 'Account not found',
+        description: cleanAccountingNarration(expense.description, reportType),
         amount: Number(expense.amount || 0),
         taxAmount: Number(expense.taxAmount || 0),
         document: expense.documentId ? 'Attached' : 'Missing',
@@ -484,7 +545,11 @@ export class AccountingReportingService {
     });
   }
 
-  private async cashBankPreview(clientName: string, businessId: string, filters: Required<ReportFilterDto>) {
+  private async cashBankPreview(
+    clientName: string,
+    businessId: string,
+    filters: NormalizedReportFilter,
+  ) {
     const balances = await this.accountBalances(businessId, filters.startDate, filters.endDate);
 
     const rows = balances
@@ -493,10 +558,12 @@ export class AccountingReportingService {
       .map((row) => ({
         code: row.code,
         account: row.name,
-        openingBalance: row.openingBalance,
+        openingBalance: Math.abs(row.openingBalance),
+        openingSide: normalBalanceLabel(row.type, row.openingBalance),
         periodDebit: row.periodDebit,
         periodCredit: row.periodCredit,
-        closingBalance: row.closingBalance,
+        closingBalance: Math.abs(row.closingBalance),
+        closingSide: normalBalanceLabel(row.type, row.closingBalance),
       }));
 
     return this.basePreview({
@@ -511,9 +578,11 @@ export class AccountingReportingService {
             { key: 'code', label: 'Code' },
             { key: 'account', label: 'Account' },
             { key: 'openingBalance', label: 'Opening', align: 'right' },
+            { key: 'openingSide', label: 'Opening Side' },
             { key: 'periodDebit', label: 'Debit', align: 'right' },
             { key: 'periodCredit', label: 'Credit', align: 'right' },
             { key: 'closingBalance', label: 'Closing', align: 'right' },
+            { key: 'closingSide', label: 'Closing Side' },
           ],
           rows,
           totals: {
@@ -524,7 +593,11 @@ export class AccountingReportingService {
     });
   }
 
-  private async taxSummaryPreview(clientName: string, businessId: string, filters: Required<ReportFilterDto>) {
+  private async taxSummaryPreview(
+    clientName: string,
+    businessId: string,
+    filters: NormalizedReportFilter,
+  ) {
     const balances = await this.accountBalances(businessId, filters.startDate, filters.endDate);
 
     const rows = balances
@@ -533,10 +606,12 @@ export class AccountingReportingService {
         code: row.code,
         account: row.name,
         type: row.type,
-        openingBalance: row.openingBalance,
+        openingBalance: Math.abs(row.openingBalance),
+        openingSide: normalBalanceLabel(row.type, row.openingBalance),
         periodDebit: row.periodDebit,
         periodCredit: row.periodCredit,
-        closingBalance: row.closingBalance,
+        closingBalance: Math.abs(row.closingBalance),
+        closingSide: normalBalanceLabel(row.type, row.closingBalance),
       }));
 
     return this.basePreview({
@@ -552,9 +627,11 @@ export class AccountingReportingService {
             { key: 'account', label: 'Account' },
             { key: 'type', label: 'Type' },
             { key: 'openingBalance', label: 'Opening', align: 'right' },
+            { key: 'openingSide', label: 'Opening Side' },
             { key: 'periodDebit', label: 'Period Dr', align: 'right' },
             { key: 'periodCredit', label: 'Period Cr', align: 'right' },
             { key: 'closingBalance', label: 'Closing', align: 'right' },
+            { key: 'closingSide', label: 'Closing Side' },
           ],
           rows,
         },
@@ -562,7 +639,11 @@ export class AccountingReportingService {
     });
   }
 
-  private async missingDocumentsPreview(clientName: string, businessId: string, filters: Required<ReportFilterDto>) {
+  private async missingDocumentsPreview(
+    clientName: string,
+    businessId: string,
+    filters: NormalizedReportFilter,
+  ) {
     const expenses = await this.prisma.expense.findMany({
       where: {
         businessId,
@@ -578,9 +659,9 @@ export class AccountingReportingService {
     });
 
     const rows = expenses.map((expense) => ({
-      date: this.formatDate(expense.expenseDate),
+      date: formatPakistanDate(expense.expenseDate),
       vendor: expense.vendor?.name || '-',
-      description: expense.description || '-',
+      description: cleanAccountingNarration(expense.description, 'expense'),
       amount: Number(expense.amount || 0),
       taxAmount: Number(expense.taxAmount || 0),
       status: expense.status,
@@ -653,14 +734,16 @@ export class AccountingReportingService {
       );
 
       const openingBalance = openingLines.reduce(
-        (sum, line) => sum + this.signedAmount(account.type, Number(line.debit || 0), Number(line.credit || 0)),
+        (sum, line) =>
+          sum + this.signedAmount(account.type, Number(line.debit || 0), Number(line.credit || 0)),
         0,
       );
 
       const periodDebit = periodLines.reduce((sum, line) => sum + Number(line.debit || 0), 0);
       const periodCredit = periodLines.reduce((sum, line) => sum + Number(line.credit || 0), 0);
       const periodAmount = periodLines.reduce(
-        (sum, line) => sum + this.signedAmount(account.type, Number(line.debit || 0), Number(line.credit || 0)),
+        (sum, line) =>
+          sum + this.signedAmount(account.type, Number(line.debit || 0), Number(line.credit || 0)),
         0,
       );
 
@@ -702,7 +785,8 @@ export class AccountingReportingService {
     });
 
     let runningBalance = openingLines.reduce(
-      (sum, line) => sum + this.signedAmount(accountType, Number(line.debit || 0), Number(line.credit || 0)),
+      (sum, line) =>
+        sum + this.signedAmount(accountType, Number(line.debit || 0), Number(line.credit || 0)),
       0,
     );
 
@@ -727,28 +811,33 @@ export class AccountingReportingService {
     return lines.map((line) => {
       const debit = Number(line.debit || 0);
       const credit = Number(line.credit || 0);
+
       runningBalance += this.signedAmount(accountType, debit, credit);
 
       return {
-        date: this.formatDate(line.journalEntry.entryDate),
-        entryNo: this.displayEntryNo(line.journalEntry.entryDate, line.journalEntry.id),
-        narration: line.journalEntry.narration,
+        date: formatPakistanDate(line.journalEntry.entryDate),
+        entryNo: displayJournalEntryNo(line.journalEntry.entryDate, line.journalEntry.id),
+        source: sourceTypeLabel(line.journalEntry.sourceType),
+        narration: cleanAccountingNarration(line.journalEntry.narration, line.journalEntry.sourceType),
         debit,
         credit,
-        balance: runningBalance,
+        balance: Math.abs(runningBalance),
+        side: normalBalanceLabel(accountType, runningBalance),
       };
     });
   }
 
-  private normalizeFilters(dto: ReportFilterDto): Required<ReportFilterDto> {
+  private normalizeFilters(dto: ReportFilterDto): NormalizedReportFilter {
     const today = new Date();
     const defaultEnd = today.toISOString().slice(0, 10);
-    const defaultStart = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
+    const defaultStart = new Date(today.getFullYear(), today.getMonth(), 1)
+      .toISOString()
+      .slice(0, 10);
 
     return {
       reportType: dto.reportType || 'profit-loss',
-      startDate: dto.startDate || dto['from' as keyof ReportFilterDto] as string || defaultStart,
-      endDate: dto.endDate || dto['to' as keyof ReportFilterDto] as string || defaultEnd,
+      startDate: dto.startDate || defaultStart,
+      endDate: dto.endDate || defaultEnd,
       accountId: dto.accountId || '',
       accountCode: dto.accountCode || '',
       accountCodes: dto.accountCodes || [],
@@ -756,6 +845,7 @@ export class AccountingReportingService {
       showMovementColumns: dto.showMovementColumns ?? true,
       missingDocumentsOnly: dto.missingDocumentsOnly ?? false,
       format: dto.format || 'preview',
+      reason: dto.reason,
     };
   }
 
@@ -764,19 +854,25 @@ export class AccountingReportingService {
     title: string;
     subtitle?: string;
     clientName: string;
-    filters: Required<ReportFilterDto>;
+    filters: NormalizedReportFilter;
     sections: PreviewSection[];
   }) {
     return {
       reportType: input.reportType,
       title: input.title,
-      subtitle: input.subtitle || `From ${input.filters.startDate} to ${input.filters.endDate}`,
+      subtitle:
+        input.subtitle ||
+        `From ${formatPakistanDate(input.filters.startDate)} to ${formatPakistanDate(
+          input.filters.endDate,
+        )}`,
       clientName: input.clientName,
-      generatedAt: this.formatDateTime(new Date()),
+      generatedAt: formatPakistanDateTime(new Date()),
       timezone: 'Asia/Karachi',
       filters: {
         startDate: input.filters.startDate,
+        startDateDisplay: formatPakistanDate(input.filters.startDate),
         endDate: input.filters.endDate,
+        endDateDisplay: formatPakistanDate(input.filters.endDate),
         accountId: input.filters.accountId,
         accountCode: input.filters.accountCode,
         accountCodes: input.filters.accountCodes,
@@ -795,6 +891,7 @@ export class AccountingReportingService {
     lines.push(this.csvRow([preview.clientName]));
     lines.push(this.csvRow([preview.subtitle]));
     lines.push(this.csvRow([`Generated at: ${preview.generatedAt}`]));
+    lines.push(this.csvRow([`Timezone: ${preview.timezone}`]));
     lines.push('');
 
     for (const section of preview.sections || []) {
@@ -810,6 +907,7 @@ export class AccountingReportingService {
       if (section.totals) {
         lines.push('');
         lines.push(this.csvRow(['Totals']));
+
         for (const [key, value] of Object.entries(section.totals)) {
           lines.push(this.csvRow([key, this.formatCell(value)]));
         }
@@ -872,28 +970,6 @@ export class AccountingReportingService {
     return signedBalance >= 0
       ? { debit: 0, credit: signedBalance }
       : { debit: Math.abs(signedBalance), credit: 0 };
-  }
-
-  private displayEntryNo(date: Date, id: string) {
-    const year = new Date(date).getFullYear();
-    return `JE-${year}-${id.slice(-6).toUpperCase()}`;
-  }
-
-  private formatDate(date: Date) {
-    return new Date(date).toLocaleDateString('en-PK', {
-      timeZone: 'Asia/Karachi',
-      year: 'numeric',
-      month: 'short',
-      day: '2-digit',
-    });
-  }
-
-  private formatDateTime(date: Date) {
-    return new Date(date).toLocaleString('en-PK', {
-      timeZone: 'Asia/Karachi',
-      dateStyle: 'medium',
-      timeStyle: 'short',
-    });
   }
 
   private endOfDay(value: string) {
