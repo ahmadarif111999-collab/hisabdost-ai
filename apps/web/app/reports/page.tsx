@@ -1,9 +1,9 @@
 'use client';
 
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { AppShell } from '@/components/AppShell';
 import { ClientRequired } from '@/components/ClientRequired';
-import { Button, Card, Input, Select } from '@/components/Card';
+import { Card, Input } from '@/components/Card';
 import { api, downloadBase64File, getBusinessId } from '@/lib/api';
 
 type Account = {
@@ -24,6 +24,7 @@ type PreviewSection = {
   columns: PreviewColumn[];
   rows: Record<string, any>[];
   totals?: Record<string, any>;
+  note?: string;
 };
 
 type ReportPreview = {
@@ -41,12 +42,12 @@ type ExportResponse = {
   filename: string;
   mimeType: string;
   contentBase64: string;
-  warning?: string;
+  message?: string;
 };
 
 const reportTypes = [
   ['profit-loss', 'Profit & Loss'],
-  ['balance-sheet', 'Balance Sheet / Statement of Financial Position'],
+  ['balance-sheet', 'Balance Sheet'],
   ['trial-balance', 'Trial Balance'],
   ['general-ledger', 'General Ledger'],
   ['sales', 'Sales Report'],
@@ -59,75 +60,83 @@ const reportTypes = [
 
 function defaultStartDate() {
   const today = new Date();
-  return new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
+  const year = today.getMonth() + 1 >= 7 ? today.getFullYear() : today.getFullYear() - 1;
+  return `${year}-07-01`;
 }
 
-function todayDate() {
+function defaultEndDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
 function money(value: any) {
-  if (typeof value !== 'number') return value || '-';
+  const amount = Number(value || 0);
 
-  return value.toLocaleString('en-PK', {
+  if (Number.isNaN(amount)) return String(value || '-');
+
+  if (amount < 0) {
+    return `(${Math.abs(amount).toLocaleString('en-PK', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    })})`;
+  }
+
+  return amount.toLocaleString('en-PK', {
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
   });
 }
 
-function isNumberValue(value: any) {
-  return typeof value === 'number';
+function formatCell(value: any) {
+  if (typeof value === 'number') return money(value);
+  if (value === null || value === undefined || value === '') return '-';
+  return String(value);
 }
 
 export default function ReportsPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [preview, setPreview] = useState<ReportPreview | null>(null);
+  const [reportType, setReportType] = useState('profit-loss');
+  const [startDate, setStartDate] = useState(defaultStartDate());
+  const [endDate, setEndDate] = useState(defaultEndDate());
+  const [accountId, setAccountId] = useState('');
+  const [includeZeroBalances, setIncludeZeroBalances] = useState(false);
+  const [missingDocumentsOnly, setMissingDocumentsOnly] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [previewing, setPreviewing] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [requesting, setRequesting] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
-  const [loadingAccounts, setLoadingAccounts] = useState(true);
-  const [loadingPreview, setLoadingPreview] = useState(false);
-  const [exporting, setExporting] = useState(false);
-  const [requestingExport, setRequestingExport] = useState(false);
 
-  const [filters, setFilters] = useState({
-    reportType: 'profit-loss',
-    startDate: defaultStartDate(),
-    endDate: todayDate(),
-    accountId: '',
-    accountCodes: [] as string[],
-    includeZeroBalances: false,
+  const filters = {
+    reportType,
+    startDate,
+    endDate,
+    accountId,
+    accountCode: '',
+    accountCodes: [],
+    includeZeroBalances,
     showMovementColumns: true,
-    missingDocumentsOnly: false,
-    format: 'preview',
-  });
-
-  const needsAccount = filters.reportType === 'general-ledger';
-
-  const selectedReportLabel = useMemo(() => {
-    return reportTypes.find(([value]) => value === filters.reportType)?.[1] || 'Report';
-  }, [filters.reportType]);
+    missingDocumentsOnly,
+    format: 'xlsx',
+  };
 
   async function loadAccounts() {
     const businessId = getBusinessId();
 
     if (!businessId) return;
 
-    setError('');
-
     try {
-      const data = await api<Account[]>(`/accounting/businesses/${businessId}/accounts`);
-      setAccounts(data || []);
+      const result = await api<Account[]>(`/accounting/businesses/${businessId}/accounts`);
+      setAccounts(result);
 
-      if (data?.length && !filters.accountId) {
-        setFilters((current) => ({
-          ...current,
-          accountId: data[0].id,
-        }));
+      if (!accountId && result.length) {
+        setAccountId(result[0].id);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load accounts');
     } finally {
-      setLoadingAccounts(false);
+      setLoading(false);
     }
   }
 
@@ -138,7 +147,7 @@ export default function ReportsPage() {
   async function previewReport(e?: FormEvent) {
     e?.preventDefault();
 
-    if (loadingPreview) return;
+    if (previewing) return;
 
     const businessId = getBusinessId();
 
@@ -146,24 +155,27 @@ export default function ReportsPage() {
 
     setMessage('');
     setError('');
-    setLoadingPreview(true);
+    setPreviewing(true);
 
     try {
-      const data = await api<ReportPreview>(`/accounting/businesses/${businessId}/reporting/preview`, {
-        method: 'POST',
-        body: JSON.stringify(filters),
-      });
+      const result = await api<ReportPreview>(
+        `/accounting/businesses/${businessId}/reporting/preview`,
+        {
+          method: 'POST',
+          body: JSON.stringify(filters),
+        },
+      );
 
-      setPreview(data);
+      setPreview(result);
       setMessage('Report preview generated.');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not generate report preview');
+      setError(err instanceof Error ? err.message : 'Could not preview report');
     } finally {
-      setLoadingPreview(false);
+      setPreviewing(false);
     }
   }
 
-  async function exportReport() {
+  async function exportXlsx() {
     if (exporting) return;
 
     const businessId = getBusinessId();
@@ -175,25 +187,25 @@ export default function ReportsPage() {
     setExporting(true);
 
     try {
-      const result = await api<ExportResponse>(`/accounting/businesses/${businessId}/reporting/export`, {
-        method: 'POST',
-        body: JSON.stringify({
-          ...filters,
-          format: 'csv',
-        }),
-      });
+      const result = await api<ExportResponse>(
+        `/accounting/businesses/${businessId}/xlsx/reports`,
+        {
+          method: 'POST',
+          body: JSON.stringify(filters),
+        },
+      );
 
       downloadBase64File(result.filename, result.mimeType, result.contentBase64);
-      setMessage(result.warning || 'Report exported.');
+      setMessage(result.message || 'XLSX report exported.');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not export report');
+      setError(err instanceof Error ? err.message : 'Could not export XLSX report');
     } finally {
       setExporting(false);
     }
   }
 
   async function requestExport() {
-    if (requestingExport) return;
+    if (requesting) return;
 
     const businessId = getBusinessId();
 
@@ -201,15 +213,14 @@ export default function ReportsPage() {
 
     setMessage('');
     setError('');
-    setRequestingExport(true);
+    setRequesting(true);
 
     try {
       await api(`/accounting/businesses/${businessId}/reporting/request-export`, {
         method: 'POST',
         body: JSON.stringify({
           ...filters,
-          format: 'csv',
-          reason: 'Client requested report from Report Builder.',
+          reason: 'Client requested XLSX report from Report Builder.',
         }),
       });
 
@@ -217,31 +228,22 @@ export default function ReportsPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not request export approval');
     } finally {
-      setRequestingExport(false);
+      setRequesting(false);
     }
-  }
-
-  function toggleAccount(code: string) {
-    setFilters((current) => ({
-      ...current,
-      accountCodes: current.accountCodes.includes(code)
-        ? current.accountCodes.filter((item) => item !== code)
-        : [...current.accountCodes, code],
-    }));
   }
 
   return (
     <AppShell>
-      <ClientRequired title="Select a client to open Report Builder">
+      <ClientRequired title="Select a client to use report builder">
         <div className="mx-auto max-w-7xl space-y-6 px-4 py-8">
           <div className="rounded-3xl bg-slate-950 p-6 text-white shadow-sm">
             <p className="text-sm font-semibold uppercase tracking-wide text-emerald-300">
               Report builder
             </p>
-            <h1 className="mt-2 text-3xl font-bold">Reports</h1>
+            <h1 className="mt-2 text-3xl font-bold">Reports & XLSX Export</h1>
             <p className="mt-2 max-w-3xl text-sm text-slate-300">
-              Build reports with proper start and end dates. Balance Sheet uses the end date as
-              the as-of date, while still respecting the selected start date.
+              Preview accounting reports and export clean Excel-compatible XLSX files with headers,
+              sections, totals, client name, period, and Pakistan timezone.
             </p>
           </div>
 
@@ -257,308 +259,204 @@ export default function ReportsPage() {
             </div>
           )}
 
-          <div className="grid gap-6 lg:grid-cols-[0.9fr_1.5fr]">
-            <Card>
-              <h2 className="text-xl font-bold text-slate-900">Filters</h2>
-              <p className="mt-1 text-sm text-slate-500">
-                All reports use both a start date and an end date.
-              </p>
+          <Card>
+            <form
+              onSubmit={previewReport}
+              className="grid gap-4 lg:grid-cols-[1fr_1fr_1fr_1fr] lg:items-end"
+            >
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Report type
+                </label>
+                <select
+                  value={reportType}
+                  onChange={(e) => setReportType(e.target.value)}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-emerald-500"
+                >
+                  {reportTypes.map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-              <form onSubmit={previewReport} className="mt-5 space-y-4">
-                <div>
-                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Report type
-                  </label>
-                  <Select
-                    value={filters.reportType}
-                    onChange={(e) =>
-                      setFilters({
-                        ...filters,
-                        reportType: e.target.value,
-                      })
-                    }
-                  >
-                    {reportTypes.map(([value, label]) => (
-                      <option key={value} value={value}>
-                        {label}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Start date
+                </label>
+                <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+              </div>
 
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div>
-                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      Start date
-                    </label>
-                    <Input
-                      type="date"
-                      value={filters.startDate}
-                      onChange={(e) =>
-                        setFilters({
-                          ...filters,
-                          startDate: e.target.value,
-                        })
-                      }
-                    />
-                  </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  End date
+                </label>
+                <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+              </div>
 
-                  <div>
-                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      End date / As-of date
-                    </label>
-                    <Input
-                      type="date"
-                      value={filters.endDate}
-                      onChange={(e) =>
-                        setFilters({
-                          ...filters,
-                          endDate: e.target.value,
-                        })
-                      }
-                    />
-                  </div>
-                </div>
+              <button
+                type="submit"
+                disabled={previewing}
+                className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {previewing ? 'Previewing...' : 'Preview'}
+              </button>
+            </form>
 
-                {filters.reportType === 'balance-sheet' && (
-                  <div className="rounded-2xl bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">
-                    For Balance Sheet, the end date is the as-of date. The start date controls the
-                    calculation base and period movement.
-                  </div>
-                )}
+            <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_1fr_1fr]">
+              <label className="flex items-center gap-2 rounded-2xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={includeZeroBalances}
+                  onChange={(e) => setIncludeZeroBalances(e.target.checked)}
+                />
+                Include zero balances
+              </label>
 
-                {filters.reportType === 'trial-balance' && (
-                  <div className="rounded-2xl bg-emerald-50 px-4 py-3 text-xs leading-5 text-emerald-800">
-                    Trial Balance shows opening balances, period movement, and closing balances
-                    between the selected dates.
-                  </div>
-                )}
+              <label className="flex items-center gap-2 rounded-2xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={missingDocumentsOnly}
+                  onChange={(e) => setMissingDocumentsOnly(e.target.checked)}
+                />
+                Missing documents only
+              </label>
 
-                {needsAccount && (
-                  <div>
-                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      Account for General Ledger
-                    </label>
-                    <Select
-                      value={filters.accountId}
-                      onChange={(e) =>
-                        setFilters({
-                          ...filters,
-                          accountId: e.target.value,
-                        })
-                      }
-                      disabled={loadingAccounts || !accounts.length}
-                    >
-                      {accounts.map((account) => (
-                        <option key={account.id} value={account.id}>
-                          {account.code} — {account.name} ({account.type})
-                        </option>
-                      ))}
-                    </Select>
-                  </div>
-                )}
-
-                <div className="space-y-2">
-                  <label className="flex items-center gap-2 rounded-2xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700">
-                    <input
-                      type="checkbox"
-                      checked={filters.includeZeroBalances}
-                      onChange={(e) =>
-                        setFilters({
-                          ...filters,
-                          includeZeroBalances: e.target.checked,
-                        })
-                      }
-                    />
-                    Include zero-balance accounts
-                  </label>
-
-                  <label className="flex items-center gap-2 rounded-2xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700">
-                    <input
-                      type="checkbox"
-                      checked={filters.missingDocumentsOnly}
-                      onChange={(e) =>
-                        setFilters({
-                          ...filters,
-                          missingDocumentsOnly: e.target.checked,
-                        })
-                      }
-                    />
-                    Missing documents only
-                  </label>
-                </div>
-
-                <div>
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Specific heads optional
-                  </p>
-
-                  <div className="max-h-48 space-y-2 overflow-y-auto rounded-2xl border border-slate-200 p-3">
-                    {accounts.map((account) => (
-                      <label
-                        key={account.id}
-                        className="flex items-start gap-2 text-xs text-slate-700"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={filters.accountCodes.includes(account.code)}
-                          onChange={() => toggleAccount(account.code)}
-                          className="mt-0.5"
-                        />
-                        <span>
-                          <b>{account.code}</b> — {account.name}
-                        </span>
-                      </label>
-                    ))}
-
-                    {!accounts.length && (
-                      <p className="text-xs text-slate-500">No accounts loaded yet.</p>
-                    )}
-                  </div>
-                </div>
-
-                <div className="grid gap-3 md:grid-cols-3">
-                  <Button
-                    type="submit"
-                    disabled={loadingPreview}
-                    className="disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {loadingPreview ? 'Previewing...' : 'Preview'}
-                  </Button>
-
-                  <button
-                    type="button"
-                    onClick={exportReport}
-                    disabled={exporting}
-                    className="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {exporting ? 'Exporting...' : 'Export CSV'}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={requestExport}
-                    disabled={requestingExport}
-                    className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {requestingExport ? 'Requesting...' : 'Request Approval'}
-                  </button>
-                </div>
-              </form>
-            </Card>
-
-            <div className="space-y-6">
-              {!preview && (
-                <Card>
-                  <h2 className="text-xl font-bold text-slate-900">Preview</h2>
-                  <p className="mt-2 text-sm text-slate-500">
-                    Select filters and click Preview. The report will appear as spreadsheet-style
-                    tables here instead of JSON.
-                  </p>
-                </Card>
-              )}
-
-              {preview && (
-                <ReportPreviewCard preview={preview} selectedReportLabel={selectedReportLabel} />
+              {reportType === 'general-ledger' && (
+                <select
+                  value={accountId}
+                  onChange={(e) => setAccountId(e.target.value)}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-emerald-500"
+                >
+                  {accounts.map((account) => (
+                    <option key={account.id} value={account.id}>
+                      {account.code} — {account.name}
+                    </option>
+                  ))}
+                </select>
               )}
             </div>
-          </div>
+
+            <div className="mt-5 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={exportXlsx}
+                disabled={exporting}
+                className="rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {exporting ? 'Exporting...' : 'Export XLSX'}
+              </button>
+
+              <button
+                type="button"
+                onClick={requestExport}
+                disabled={requesting}
+                className="rounded-2xl border border-slate-200 px-5 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {requesting ? 'Requesting...' : 'Request Export Approval'}
+              </button>
+            </div>
+          </Card>
+
+          {loading && (
+            <Card>
+              <p className="text-sm text-slate-600">Loading accounts...</p>
+            </Card>
+          )}
+
+          {preview && <ReportPreviewCard preview={preview} />}
         </div>
       </ClientRequired>
     </AppShell>
   );
 }
 
-function ReportPreviewCard({
-  preview,
-  selectedReportLabel,
-}: {
-  preview: ReportPreview;
-  selectedReportLabel: string;
-}) {
+function ReportPreviewCard({ preview }: { preview: ReportPreview }) {
   return (
     <Card>
-      <div className="mb-5 border-b border-slate-200 pb-4">
-        <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
-          {selectedReportLabel}
-        </p>
-        <h2 className="mt-1 text-2xl font-bold text-slate-900">{preview.title}</h2>
-        <p className="mt-1 text-sm font-semibold text-slate-700">{preview.clientName}</p>
+      <div className="border-b border-slate-200 pb-4">
+        <h2 className="text-2xl font-bold text-slate-900">{preview.title}</h2>
         <p className="mt-1 text-sm text-slate-500">{preview.subtitle}</p>
         <p className="mt-1 text-xs text-slate-400">
-          Generated {preview.generatedAt} • {preview.timezone}
+          Client: {preview.clientName} • Generated: {preview.generatedAt} • {preview.timezone}
         </p>
       </div>
 
-      <div className="space-y-8">
+      <div className="mt-6 space-y-8">
         {preview.sections.map((section) => (
-          <div key={section.title}>
-            <h3 className="mb-3 text-lg font-bold text-slate-900">{section.title}</h3>
-
-            <div className="overflow-x-auto rounded-2xl border border-slate-200">
-              <table className="min-w-full text-left text-sm">
-                <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                  <tr>
-                    {section.columns.map((column) => (
-                      <th
-                        key={column.key}
-                        className={`px-4 py-3 ${
-                          column.align === 'right' ? 'text-right' : 'text-left'
-                        }`}
-                      >
-                        {column.label}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-
-                <tbody className="divide-y divide-slate-100">
-                  {section.rows.map((row, index) => (
-                    <tr key={index} className="bg-white">
-                      {section.columns.map((column) => (
-                        <td
-                          key={column.key}
-                          className={`px-4 py-3 ${
-                            column.align === 'right' || isNumberValue(row[column.key])
-                              ? 'text-right font-medium'
-                              : 'text-left'
-                          }`}
-                        >
-                          {money(row[column.key])}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-
-                  {!section.rows.length && (
-                    <tr>
-                      <td
-                        colSpan={section.columns.length}
-                        className="px-4 py-8 text-center text-sm text-slate-500"
-                      >
-                        No rows for this report and date range.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            {section.totals && (
-              <div className="mt-3 grid gap-3 md:grid-cols-3">
-                {Object.entries(section.totals).map(([key, value]) => (
-                  <div key={key} className="rounded-2xl bg-slate-50 px-4 py-3">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      {key.replace(/([A-Z])/g, ' $1')}
-                    </p>
-                    <p className="mt-1 text-lg font-bold text-slate-900">{money(value)}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <SectionTable key={section.title} section={section} />
         ))}
       </div>
     </Card>
+  );
+}
+
+function SectionTable({ section }: { section: PreviewSection }) {
+  return (
+    <div>
+      <h3 className="mb-3 text-lg font-bold text-slate-900">{section.title}</h3>
+
+      {section.note && (
+        <div className="mb-3 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+          {section.note}
+        </div>
+      )}
+
+      <div className="overflow-hidden rounded-2xl border border-slate-200">
+        <table className="w-full text-left text-sm">
+          <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+            <tr>
+              {section.columns.map((column) => (
+                <th
+                  key={column.key}
+                  className={`px-4 py-3 ${column.align === 'right' ? 'text-right' : ''}`}
+                >
+                  {column.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+
+          <tbody className="divide-y divide-slate-100">
+            {section.rows.map((row, index) => (
+              <tr key={index} className="bg-white">
+                {section.columns.map((column) => (
+                  <td
+                    key={column.key}
+                    className={`px-4 py-3 ${
+                      column.align === 'right' ? 'text-right font-mono' : 'text-slate-700'
+                    }`}
+                  >
+                    {formatCell(row[column.key])}
+                  </td>
+                ))}
+              </tr>
+            ))}
+
+            {!section.rows.length && (
+              <tr>
+                <td colSpan={section.columns.length} className="px-4 py-6 text-center text-slate-500">
+                  No rows for this section.
+                </td>
+              </tr>
+            )}
+          </tbody>
+
+          {section.totals && (
+            <tfoot className="bg-slate-50 text-sm font-bold text-slate-900">
+              {Object.entries(section.totals).map(([key, value]) => (
+                <tr key={key}>
+                  <td className="px-4 py-3" colSpan={Math.max(section.columns.length - 1, 1)}>
+                    {key.replace(/([A-Z])/g, ' $1').replace(/^./, (char) => char.toUpperCase())}
+                  </td>
+                  <td className="px-4 py-3 text-right font-mono">{formatCell(value)}</td>
+                </tr>
+              ))}
+            </tfoot>
+          )}
+        </table>
+      </div>
+    </div>
   );
 }
