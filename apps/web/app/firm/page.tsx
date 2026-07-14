@@ -1,7 +1,7 @@
 'use client';
 
-import { FormEvent, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { FormEvent, useEffect, useState } from 'react';
 import { AppShell } from '@/components/AppShell';
 import { Button, Card, Input, Select } from '@/components/Card';
 import { api, setBusinessId } from '@/lib/api';
@@ -43,6 +43,10 @@ type Dashboard = {
   missingDocuments: number;
 };
 
+type InvoiceSummary = {
+  status?: string;
+};
+
 const emptyClientForm = {
   name: '',
   businessType: 'Retail',
@@ -53,24 +57,46 @@ const emptyClientForm = {
   clientOwnerEmail: '',
 };
 
+const pendingInvoiceStatuses = new Set(['DRAFT', 'SENT', 'OVERDUE']);
+
 export default function FirmPage() {
   const [data, setData] = useState<Dashboard | null>(null);
+  const [pendingInvoices, setPendingInvoices] = useState(0);
   const [form, setForm] = useState(emptyClientForm);
   const [memberEmail, setMemberEmail] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
-
   const [creatingClient, setCreatingClient] = useState(false);
   const [invitingMember, setInvitingMember] = useState(false);
   const [archivingClientId, setArchivingClientId] = useState<string | null>(null);
+
+  async function countPendingInvoices(clients: Client[]) {
+    const results = await Promise.allSettled(
+      clients.map((client) => api<InvoiceSummary[]>(`/invoices/businesses/${client.id}`)),
+    );
+
+    return results.reduce((total, result) => {
+      if (result.status !== 'fulfilled') {
+        return total;
+      }
+
+      return (
+        total +
+        result.value.filter((invoice) =>
+          pendingInvoiceStatuses.has(String(invoice.status || '').toUpperCase()),
+        ).length
+      );
+    }, 0);
+  }
 
   async function load() {
     setError('');
 
     try {
-      const dashboard = await api('/firm/dashboard');
+      const dashboard = await api<Dashboard>('/firm/dashboard');
       setData(dashboard);
+      setPendingInvoices(await countPendingInvoices(dashboard.clients));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load firm dashboard');
     } finally {
@@ -79,25 +105,28 @@ export default function FirmPage() {
   }
 
   useEffect(() => {
-    load();
+    void load();
   }, []);
 
-  async function addClient(e: FormEvent) {
-    e.preventDefault();
+  async function addClient(event: FormEvent) {
+    event.preventDefault();
 
-    if (creatingClient) return;
+    if (creatingClient) {
+      return;
+    }
 
     setMessage('');
     setError('');
     setCreatingClient(true);
 
     try {
-      const client = await api('/firm/clients', {
+      const client = await api<Client>('/firm/clients', {
         method: 'POST',
         body: JSON.stringify(form),
       });
 
       setBusinessId(client.id);
+      window.dispatchEvent(new Event('pakbooks-business-changed'));
       setForm(emptyClientForm);
       setMessage(`${client.name} client company created.`);
       await load();
@@ -108,10 +137,12 @@ export default function FirmPage() {
     }
   }
 
-  async function inviteFirmMember(e: FormEvent) {
-    e.preventDefault();
+  async function inviteFirmMember(event: FormEvent) {
+    event.preventDefault();
 
-    if (invitingMember) return;
+    if (invitingMember) {
+      return;
+    }
 
     setMessage('');
     setError('');
@@ -137,13 +168,17 @@ export default function FirmPage() {
   }
 
   async function archiveClient(client: Client) {
-    if (archivingClientId) return;
+    if (archivingClientId) {
+      return;
+    }
 
-    const ok = window.confirm(
+    const confirmed = window.confirm(
       `Archive ${client.name}? This will remove it from the active client list, but its accounting records will stay safely stored.`,
     );
 
-    if (!ok) return;
+    if (!confirmed) {
+      return;
+    }
 
     setMessage('');
     setError('');
@@ -170,6 +205,7 @@ export default function FirmPage() {
 
   function openClient(client: Client) {
     setBusinessId(client.id);
+    window.dispatchEvent(new Event('pakbooks-business-changed'));
     setMessage(`${client.name} selected. You can now open client books from the sidebar.`);
   }
 
@@ -185,7 +221,9 @@ export default function FirmPage() {
     );
   }
 
-  const clientLimitReached = data ? data.clientSlotsUsed >= data.clientSlotLimit : false;
+  const clientLimitReached = data
+    ? data.clientSlotsUsed >= data.clientSlotLimit
+    : false;
 
   return (
     <AppShell>
@@ -199,14 +237,16 @@ export default function FirmPage() {
               {data?.firm.name || 'ProBiz Consultants'}
             </h1>
             <p className="mt-2 max-w-3xl text-sm text-slate-300">
-              Manage client companies, partner access, missing documents, AI approvals, and monthly
-              accounting workflows from one shared firm workspace.
+              Manage client companies, partner access, missing documents, approvals, and
+              monthly accounting workflows from one shared firm workspace.
             </p>
           </div>
 
           <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3">
             <p className="text-xs uppercase tracking-wide text-slate-300">Current plan</p>
-            <p className="mt-1 text-lg font-semibold">{data?.firm.planName || 'Partner Beta'}</p>
+            <p className="mt-1 text-lg font-semibold">
+              {data?.firm.planName || 'Partner Beta'}
+            </p>
           </div>
         </div>
 
@@ -224,7 +264,7 @@ export default function FirmPage() {
 
         {data && (
           <>
-            <div className="grid gap-4 md:grid-cols-4">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
               <Metric
                 label="Client slots"
                 value={`${data.clientSlotsUsed}/${data.clientSlotLimit}`}
@@ -239,11 +279,25 @@ export default function FirmPage() {
                 label="AI approvals"
                 value={String(data.pendingAiActions || 0)}
                 detail="Pending accountant review"
+                href="/approvals?status=pending"
               />
               <Metric
                 label="Missing docs"
                 value={String(data.missingDocuments || 0)}
                 detail="Expenses without receipts"
+                href="/documents?missing=true&scope=firm"
+              />
+              <Metric
+                label="Pending invoices"
+                value={String(pendingInvoices)}
+                detail="Draft, sent, or overdue"
+                href="/invoices?status=pending&scope=firm"
+              />
+              <Metric
+                label="Report requests"
+                value={String(data.pendingReportRequests || 0)}
+                detail="Waiting for firm decision"
+                href="/report-requests?status=pending"
               />
             </div>
 
@@ -271,13 +325,14 @@ export default function FirmPage() {
                         <th className="px-4 py-3 text-right">Actions</th>
                       </tr>
                     </thead>
-
                     <tbody className="divide-y divide-slate-100">
                       {data.clients.map((client) => (
                         <tr key={client.id} className="bg-white">
                           <td className="px-4 py-3">
                             <p className="font-semibold text-slate-900">{client.name}</p>
-                            <p className="text-xs text-slate-500">{client.city || 'City not set'}</p>
+                            <p className="text-xs text-slate-500">
+                              {client.city || 'City not set'}
+                            </p>
                           </td>
                           <td className="px-4 py-3 text-slate-600">
                             {client.businessType || '-'}
@@ -298,7 +353,6 @@ export default function FirmPage() {
                               >
                                 Open
                               </button>
-
                               <button
                                 type="button"
                                 onClick={() => archiveClient(client)}
@@ -314,8 +368,12 @@ export default function FirmPage() {
 
                       {!data.clients.length && (
                         <tr>
-                          <td colSpan={4} className="px-4 py-8 text-center text-sm text-slate-500">
-                            No clients yet. Add your first test client from the form on the right.
+                          <td
+                            colSpan={4}
+                            className="px-4 py-8 text-center text-sm text-slate-500"
+                          >
+                            No clients yet. Add your first test client from the form on the
+                            right.
                           </td>
                         </tr>
                       )}
@@ -334,14 +392,15 @@ export default function FirmPage() {
                   <Input
                     placeholder="Client business name"
                     value={form.name}
-                    onChange={(e) => setForm({ ...form, name: e.target.value })}
+                    onChange={(event) => setForm({ ...form, name: event.target.value })}
                     required
                     disabled={creatingClient}
                   />
-
                   <Select
                     value={form.businessType}
-                    onChange={(e) => setForm({ ...form, businessType: e.target.value })}
+                    onChange={(event) =>
+                      setForm({ ...form, businessType: event.target.value })
+                    }
                     disabled={creatingClient}
                   >
                     <option>Retail</option>
@@ -353,10 +412,11 @@ export default function FirmPage() {
                     <option>Medical Store</option>
                     <option>Clothing Shop</option>
                   </Select>
-
                   <Select
                     value={form.entityType}
-                    onChange={(e) => setForm({ ...form, entityType: e.target.value })}
+                    onChange={(event) =>
+                      setForm({ ...form, entityType: event.target.value })
+                    }
                     disabled={creatingClient}
                   >
                     <option value="INDIVIDUAL">Individual</option>
@@ -364,35 +424,32 @@ export default function FirmPage() {
                     <option value="AOP">AOP</option>
                     <option value="PVT_LTD">Private Limited</option>
                   </Select>
-
                   <Input
                     placeholder="City"
                     value={form.city}
-                    onChange={(e) => setForm({ ...form, city: e.target.value })}
+                    onChange={(event) => setForm({ ...form, city: event.target.value })}
                     disabled={creatingClient}
                   />
-
                   <Input
                     placeholder="NTN"
                     value={form.ntn}
-                    onChange={(e) => setForm({ ...form, ntn: e.target.value })}
+                    onChange={(event) => setForm({ ...form, ntn: event.target.value })}
                     disabled={creatingClient}
                   />
-
                   <Input
                     placeholder="STRN"
                     value={form.strn}
-                    onChange={(e) => setForm({ ...form, strn: e.target.value })}
+                    onChange={(event) => setForm({ ...form, strn: event.target.value })}
                     disabled={creatingClient}
                   />
-
                   <Input
                     placeholder="Client owner email optional"
                     value={form.clientOwnerEmail}
-                    onChange={(e) => setForm({ ...form, clientOwnerEmail: e.target.value })}
+                    onChange={(event) =>
+                      setForm({ ...form, clientOwnerEmail: event.target.value })
+                    }
                     disabled={creatingClient}
                   />
-
                   <Button
                     type="submit"
                     disabled={creatingClient || clientLimitReached}
@@ -422,11 +479,10 @@ export default function FirmPage() {
                     type="email"
                     placeholder="partner@email.com"
                     value={memberEmail}
-                    onChange={(e) => setMemberEmail(e.target.value)}
+                    onChange={(event) => setMemberEmail(event.target.value)}
                     required
                     disabled={invitingMember}
                   />
-
                   <Button
                     type="submit"
                     disabled={invitingMember}
@@ -469,16 +525,37 @@ function Metric({
   label,
   value,
   detail,
+  href,
 }: {
   label: string;
   value: string;
   detail: string;
+  href?: string;
 }) {
-  return (
-    <Card>
+  const content = (
+    <Card
+      className={
+        href
+          ? 'h-full border-slate-200 transition group-hover:-translate-y-0.5 group-hover:border-emerald-300 group-hover:shadow-md'
+          : 'h-full'
+      }
+    >
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
       <p className="mt-2 text-3xl font-bold text-slate-900">{value}</p>
       <p className="mt-1 text-sm text-slate-500">{detail}</p>
+      {href && (
+        <p className="mt-3 text-xs font-semibold text-emerald-700">Open filtered view →</p>
+      )}
     </Card>
+  );
+
+  if (!href) {
+    return content;
+  }
+
+  return (
+    <Link href={href} className="group block h-full" aria-label={`Open ${label}`}>
+      {content}
+    </Link>
   );
 }
