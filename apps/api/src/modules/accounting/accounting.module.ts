@@ -7,10 +7,12 @@ import { AccountingController } from './accounting.controller';
 import { AccountingViewsController } from './accounting-views.controller';
 import { AccountingReportingController } from './accounting-reporting.controller';
 import { FinancialStatementsController } from './financial-statements.controller';
+import { XlsxExportController } from './xlsx-export.controller';
 import { AccountingService } from './accounting.service';
 import { AccountingViewsService } from './accounting-views.service';
 import { AccountingReportingService } from './accounting-reporting.service';
 import { FinancialStatementsService } from './financial-statements.service';
+import { XlsxExportService } from './xlsx-export.service';
 
 @Module({
   imports: [AuthModule, PrismaModule, BusinessesModule, PeriodsModule],
@@ -19,12 +21,14 @@ import { FinancialStatementsService } from './financial-statements.service';
     AccountingViewsController,
     AccountingReportingController,
     FinancialStatementsController,
+    XlsxExportController,
   ],
   providers: [
     AccountingService,
     AccountingViewsService,
     AccountingReportingService,
     FinancialStatementsService,
+    XlsxExportService,
   ],
   exports: [AccountingService],
 })
