@@ -3,8 +3,8 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { AppShell } from '@/components/AppShell';
 import { ClientRequired } from '@/components/ClientRequired';
-import { Button, Card, Input } from '@/components/Card';
-import { api, getBusinessId } from '@/lib/api';
+import { Card, Input } from '@/components/Card';
+import { api, downloadBase64File, getBusinessId } from '@/lib/api';
 
 type StatementColumn = {
   key: string;
@@ -40,6 +40,13 @@ type FinancialStatementsPreview = {
     includeZeroBalances: boolean;
   };
   statements: Statement[];
+};
+
+type ExportResponse = {
+  filename: string;
+  mimeType: string;
+  contentBase64: string;
+  message?: string;
 };
 
 function defaultStartDate() {
@@ -81,6 +88,8 @@ export default function FinancialStatementsPage() {
   const [includeZeroBalances, setIncludeZeroBalances] = useState(false);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
   async function load() {
@@ -119,8 +128,42 @@ export default function FinancialStatementsPage() {
 
     if (generating) return;
 
+    setMessage('');
     setGenerating(true);
     await load();
+  }
+
+  async function exportXlsx() {
+    if (exporting) return;
+
+    const businessId = getBusinessId();
+
+    if (!businessId) return;
+
+    setMessage('');
+    setError('');
+    setExporting(true);
+
+    try {
+      const result = await api<ExportResponse>(
+        `/accounting/businesses/${businessId}/xlsx/financial-statements`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            startDate,
+            endDate,
+            includeZeroBalances,
+          }),
+        },
+      );
+
+      downloadBase64File(result.filename, result.mimeType, result.contentBase64);
+      setMessage(result.message || 'Financial statements XLSX exported.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not export financial statements');
+    } finally {
+      setExporting(false);
+    }
   }
 
   if (loading) {
@@ -147,8 +190,8 @@ export default function FinancialStatementsPage() {
             </p>
             <h1 className="mt-2 text-3xl font-bold">Financial Statements</h1>
             <p className="mt-2 max-w-3xl text-sm text-slate-300">
-              Generate the full financial statement pack: Statement of Financial Position,
-              Profit or Loss, Cash Flows, Changes in Equity, and Notes.
+              Generate and export the full financial statement pack: Statement of Financial
+              Position, Profit or Loss, Cash Flows, Changes in Equity, and Notes.
             </p>
           </div>
 
@@ -158,8 +201,14 @@ export default function FinancialStatementsPage() {
             </div>
           )}
 
+          {message && (
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+              {message}
+            </div>
+          )}
+
           <Card>
-            <form onSubmit={generate} className="grid gap-4 lg:grid-cols-[1fr_1fr_auto_auto] lg:items-end">
+            <form onSubmit={generate} className="grid gap-4 lg:grid-cols-[1fr_1fr_auto_auto_auto] lg:items-end">
               <div>
                 <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
                   Start date
@@ -183,9 +232,22 @@ export default function FinancialStatementsPage() {
                 Include zero balances
               </label>
 
-              <Button type="submit" disabled={generating} className="disabled:cursor-not-allowed disabled:opacity-60">
+              <button
+                type="submit"
+                disabled={generating}
+                className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+              >
                 {generating ? 'Generating...' : 'Generate'}
-              </Button>
+              </button>
+
+              <button
+                type="button"
+                onClick={exportXlsx}
+                disabled={exporting}
+                className="rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {exporting ? 'Exporting...' : 'Export XLSX'}
+              </button>
             </form>
           </Card>
 
