@@ -1,8 +1,9 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
-import { PrismaModule } from '../../prisma/prisma.module';
 import { BusinessesModule } from '../businesses/businesses.module';
 import { PeriodsModule } from '../periods/periods.module';
+import { ReferenceNumbersModule } from '../reference-numbers/reference-numbers.module';
+import { PrismaModule } from '../../prisma/prisma.module';
 
 import { AccountingController } from './accounting.controller';
 import { AccountingViewsController } from './accounting-views.controller';
@@ -23,6 +24,7 @@ import { ReportApprovalService } from './report-approval.service';
     PrismaModule,
     BusinessesModule,
     PeriodsModule,
+    ReferenceNumbersModule,
   ],
   controllers: [
     AccountingController,
@@ -39,8 +41,6 @@ import { ReportApprovalService } from './report-approval.service';
     XlsxExportService,
     ReportApprovalService,
   ],
-  exports: [
-    AccountingService,
-  ],
+  exports: [AccountingService],
 })
 export class AccountingModule {}
