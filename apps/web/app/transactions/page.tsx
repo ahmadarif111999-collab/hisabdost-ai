@@ -35,11 +35,31 @@ type Account = {
 
 type TransactionResult = {
   message?: string;
+
+  entry?: {
+    id: string;
+    entryNo?: string;
+    displayNumber?: string;
+  };
+
   expense?: {
     id: string;
+    expenseNo?: string;
+    referenceNo?: string;
+    displayNumber?: string;
   };
+
   purchase?: {
     id: string;
+    purchaseNo?: string;
+    referenceNo?: string;
+    displayNumber?: string;
+  };
+
+  payment?: {
+    id: string;
+    paymentNo?: string;
+    displayNumber?: string;
   };
 };
 
@@ -101,6 +121,11 @@ export default function TransactionsPage() {
   ] = useState('');
 
   const [
+    referenceNo,
+    setReferenceNo,
+  ] = useState('');
+
+  const [
     error,
     setError,
   ] = useState('');
@@ -153,49 +178,56 @@ export default function TransactionsPage() {
   }, []);
 
   const accountOptions =
-    useMemo(
-      () =>
-        accounts.filter(
-          (account) => {
-            if (
-              type === 'sale'
-            ) {
-              return (
-                account.type ===
-                'INCOME'
-              );
-            }
+    useMemo(() => {
+      return accounts.filter(
+        (account) => {
+          if (
+            type === 'sale'
+          ) {
+            return (
+              account.type ===
+              'INCOME'
+            );
+          }
 
-            if (
-              type === 'purchase'
-            ) {
-              return (
-                account.code ===
-                  '5000' ||
-                account.code ===
-                  '1200' ||
-                account.name
-                  .toLowerCase()
-                  .includes(
-                    'purchase',
-                  )
-              );
-            }
+          if (
+            type === 'purchase'
+          ) {
+            return (
+              account.code ===
+                '5000' ||
+              account.code ===
+                '1200' ||
+              account.name
+                .toLowerCase()
+                .includes(
+                  'purchase',
+                ) ||
+              account.name
+                .toLowerCase()
+                .includes(
+                  'inventory',
+                )
+            );
+          }
 
-            if (
-              type === 'expense'
-            ) {
-              return (
-                account.type ===
-                'EXPENSE'
-              );
-            }
+          if (
+            type === 'expense'
+          ) {
+            return (
+              account.type ===
+              'EXPENSE'
+            );
+          }
 
-            return false;
-          },
-        ),
-      [accounts, type],
-    );
+          return false;
+        },
+      );
+    }, [accounts, type]);
+
+  const supportsReceipt =
+    type === 'purchase' ||
+    type === 'expense';
 
   function changeType(
     nextType: TxType,
@@ -208,6 +240,7 @@ export default function TransactionsPage() {
     setPaymentMethod('cash');
     setAccountCode('');
     setMessage('');
+    setReferenceNo('');
     setError('');
 
     setRecordedWithoutDocument(
@@ -238,7 +271,6 @@ export default function TransactionsPage() {
       setError(
         'Please add or select a client company first.',
       );
-
       return;
     }
 
@@ -254,12 +286,12 @@ export default function TransactionsPage() {
       setError(
         'Enter a valid transaction amount greater than zero.',
       );
-
       return;
     }
 
     setBusy(true);
     setMessage('');
+    setReferenceNo('');
     setError('');
 
     setRecordedWithoutDocument(
@@ -268,7 +300,8 @@ export default function TransactionsPage() {
 
     const body:
       Record<string, unknown> = {
-        amount: numericAmount,
+        amount:
+          numericAmount,
         paymentMethod,
         accountCode:
           accountCode ||
@@ -309,7 +342,8 @@ export default function TransactionsPage() {
     }
 
     if (type === 'receive') {
-      path = 'payments/receive';
+      path =
+        'payments/receive';
 
       body.partyName =
         partyName.trim() ||
@@ -339,13 +373,15 @@ export default function TransactionsPage() {
           },
         );
 
+      const createdReference =
+        getCreatedReference(
+          type,
+          result,
+        );
+
       const expenseId =
         result.purchase?.id ||
         result.expense?.id;
-
-      const supportsReceipt =
-        type === 'purchase' ||
-        type === 'expense';
 
       if (
         supportsReceipt &&
@@ -370,7 +406,7 @@ export default function TransactionsPage() {
           );
 
           setMessage(
-            `${transactionLabels[type]} recorded and the receipt was attached successfully.`,
+            `${transactionLabels[type]} recorded and receipt attached.`,
           );
         } catch (
           attachmentError
@@ -380,7 +416,7 @@ export default function TransactionsPage() {
           );
 
           setMessage(
-            `${transactionLabels[type]} was recorded, but the receipt could not be attached. The item is now visible in Missing Documents.`,
+            `${transactionLabels[type]} was recorded, but the receipt could not be attached.`,
           );
 
           setError(
@@ -406,6 +442,10 @@ export default function TransactionsPage() {
         }
       }
 
+      setReferenceNo(
+        createdReference,
+      );
+
       setAmount('');
       setPartyName('');
       setDescription('');
@@ -413,7 +453,8 @@ export default function TransactionsPage() {
       setReceiptFile(null);
     } catch (submitError) {
       setError(
-        submitError instanceof Error
+        submitError instanceof
+          Error
           ? submitError.message
           : 'Could not record the transaction.',
       );
@@ -421,10 +462,6 @@ export default function TransactionsPage() {
       setBusy(false);
     }
   }
-
-  const supportsReceipt =
-    type === 'purchase' ||
-    type === 'expense';
 
   return (
     <AppShell>
@@ -440,10 +477,11 @@ export default function TransactionsPage() {
             </h1>
 
             <p className="mt-1 text-slate-600">
-              Record sales,
-              purchases, expenses,
-              customer recoveries,
-              and supplier payments.
+              Record transactions
+              with permanent
+              journal, purchase,
+              expense, and payment
+              references.
             </p>
           </div>
 
@@ -455,7 +493,14 @@ export default function TransactionsPage() {
 
           {message && (
             <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-              {message}
+              <p>{message}</p>
+
+              {referenceNo && (
+                <p className="mt-2 font-mono text-base font-bold text-emerald-900">
+                  Reference:{' '}
+                  {referenceNo}
+                </p>
+              )}
             </div>
           )}
 
@@ -689,8 +734,8 @@ export default function TransactionsPage() {
                   <p className="mt-1 text-xs text-slate-500">
                     Optional. When
                     omitted, the
-                    transaction will
-                    appear in Missing
+                    transaction appears
+                    in Missing
                     Documents.
                   </p>
 
@@ -735,6 +780,57 @@ export default function TransactionsPage() {
         </div>
       </ClientRequired>
     </AppShell>
+  );
+}
+
+function getCreatedReference(
+  type: TxType,
+  result: TransactionResult,
+) {
+  if (type === 'purchase') {
+    return (
+      result.purchase
+        ?.purchaseNo ||
+      result.purchase
+        ?.referenceNo ||
+      result.purchase
+        ?.displayNumber ||
+      result.entry?.entryNo ||
+      ''
+    );
+  }
+
+  if (type === 'expense') {
+    return (
+      result.expense
+        ?.expenseNo ||
+      result.expense
+        ?.referenceNo ||
+      result.expense
+        ?.displayNumber ||
+      result.entry?.entryNo ||
+      ''
+    );
+  }
+
+  if (
+    type === 'receive' ||
+    type === 'pay_supplier'
+  ) {
+    return (
+      result.payment
+        ?.paymentNo ||
+      result.payment
+        ?.displayNumber ||
+      ''
+    );
+  }
+
+  return (
+    result.entry?.entryNo ||
+    result.entry
+      ?.displayNumber ||
+    ''
   );
 }
 
