@@ -33,9 +33,19 @@ export class HumanReadableReferenceInterceptor
     context: ExecutionContext,
     next: CallHandler,
   ): Observable<any> {
-    const request = context.switchToHttp().getRequest<RequestLike>();
-    const url = String(request.originalUrl || request.url || '');
-    const method = String(request.method || 'GET').toUpperCase();
+    const request =
+      context.switchToHttp().getRequest<RequestLike>();
+
+    const url = String(
+      request.originalUrl ||
+        request.url ||
+        '',
+    );
+
+    const method = String(
+      request.method ||
+        'GET',
+    ).toUpperCase();
 
     if (
       method === 'POST' &&
@@ -43,7 +53,11 @@ export class HumanReadableReferenceInterceptor
         url,
       )
     ) {
-      return from(this.submitReportRequest(request));
+      return from(
+        this.submitReportRequest(
+          request,
+        ),
+      );
     }
 
     if (
@@ -52,55 +66,117 @@ export class HumanReadableReferenceInterceptor
         url,
       )
     ) {
-      return from(this.exportCsv(request));
+      return from(
+        this.exportCsv(
+          request,
+        ),
+      );
     }
 
-    return next.handle().pipe(
-      mergeMap((data) => from(this.decorateResponse(request, data))),
+    return next
+      .handle()
+      .pipe(
+        mergeMap(
+          (data) =>
+            from(
+              this.decorateResponse(
+                request,
+                data,
+              ),
+            ),
+        ),
+      );
+  }
+
+  private async submitReportRequest(
+    request: RequestLike,
+  ) {
+    const businessId =
+      this.businessId(
+        request,
+      );
+
+    const userId =
+      this.userId(
+        request,
+      );
+
+    const service =
+      this.moduleRef.get(
+        ReportApprovalService,
+        {
+          strict: false,
+        },
+      );
+
+    const result =
+      await service.requestExport(
+        userId,
+        businessId,
+        request.body || {},
+      );
+
+    return this.presentation.decorateReportRequestPayload(
+      result,
     );
   }
 
-  private async submitReportRequest(request: RequestLike) {
-    const businessId = this.businessId(request);
-    const userId = this.userId(request);
-    const service = this.moduleRef.get(ReportApprovalService, {
-      strict: false,
-    });
-    const result = await service.requestExport(
+  private async exportCsv(
+    request: RequestLike,
+  ) {
+    const businessId =
+      this.businessId(
+        request,
+      );
+
+    const userId =
+      this.userId(
+        request,
+      );
+
+    const approval =
+      this.moduleRef.get(
+        ReportApprovalService,
+        {
+          strict: false,
+        },
+      );
+
+    const reporting =
+      this.moduleRef.get(
+        AccountingReportingService,
+        {
+          strict: false,
+        },
+      );
+
+    await approval.assertCanDirectExport(
       userId,
       businessId,
-      request.body || {},
     );
 
-    return this.presentation.decorateReportRequestPayload(result);
-  }
+    const reportBody =
+      (request.body ||
+        {}) as any;
 
-  private async exportCsv(request: RequestLike) {
-    const businessId = this.businessId(request);
-    const userId = this.userId(request);
-    const approval = this.moduleRef.get(ReportApprovalService, {
-      strict: false,
-    });
-    const reporting = this.moduleRef.get(AccountingReportingService, {
-      strict: false,
-    });
+    const rawPreview =
+      await reporting.preview(
+        userId,
+        businessId,
+        reportBody,
+      );
 
-    await approval.assertCanDirectExport(userId, businessId);
-    const rawPreview = await reporting.preview(
-      userId,
-      businessId,
-      request.body || {},
-    );
-    const preview = await this.presentation.decorateReportPreview(
-      businessId,
-      request.body || {},
-      rawPreview,
-    );
+    const preview =
+      await this.presentation.decorateReportPreview(
+        businessId,
+        reportBody,
+        rawPreview,
+      );
 
     return this.presentation.exportDecoratedCsv(
       userId,
       businessId,
-      request.body || {},
+      reportBody,
       preview,
     );
   }
@@ -109,10 +185,18 @@ export class HumanReadableReferenceInterceptor
     request: RequestLike,
     data: any,
   ) {
-    if (data == null) return data;
+    if (data == null) {
+      return data;
+    }
 
-    const url = String(request.originalUrl || request.url || '');
-    const businessId = request.params?.businessId;
+    const url = String(
+      request.originalUrl ||
+        request.url ||
+        '',
+    );
+
+    const businessId =
+      request.params?.businessId;
 
     if (
       businessId &&
@@ -128,23 +212,48 @@ export class HumanReadableReferenceInterceptor
     }
 
     if (
-      url.includes('/report-export-requests') ||
-      url.includes('/reporting/export-requests') ||
-      url.includes('/reporting/request-export')
+      url.includes(
+        '/report-export-requests',
+      ) ||
+      url.includes(
+        '/reporting/export-requests',
+      ) ||
+      url.includes(
+        '/reporting/request-export',
+      )
     ) {
-      return this.presentation.decorateReportRequestPayload(data);
-    }
-
-    if (businessId && url.includes('/documents')) {
-      return this.presentation.decorateDocumentPayload(businessId, data);
+      return this.presentation.decorateReportRequestPayload(
+        data,
+      );
     }
 
     if (
       businessId &&
-      /\/xlsx\/approved-request\/([^/?]+)/.test(url)
+      url.includes(
+        '/documents',
+      )
     ) {
-      const match = url.match(/\/xlsx\/approved-request\/([^/?]+)/);
-      const requestId = request.params?.requestId || match?.[1];
+      return this.presentation.decorateDocumentPayload(
+        businessId,
+        data,
+      );
+    }
+
+    if (
+      businessId &&
+      /\/xlsx\/approved-request\/([^/?]+)/.test(
+        url,
+      )
+    ) {
+      const match = url.match(
+        /\/xlsx\/approved-request\/([^/?]+)/,
+      );
+
+      const requestId =
+        request.params
+          ?.requestId ||
+        match?.[1];
+
       if (requestId) {
         return this.presentation.markApprovedRequestExported(
           businessId,
@@ -155,31 +264,52 @@ export class HumanReadableReferenceInterceptor
     }
 
     if (
-      url.includes('/export-history') ||
-      url.includes('/report-exports')
+      url.includes(
+        '/export-history',
+      ) ||
+      url.includes(
+        '/report-exports',
+      )
     ) {
-      return this.presentation.decorateExportHistoryPayload(data);
+      return this.presentation.decorateExportHistoryPayload(
+        data,
+      );
     }
 
     return data;
   }
 
-  private businessId(request: RequestLike) {
-    const businessId = request.params?.businessId;
+  private businessId(
+    request: RequestLike,
+  ) {
+    const businessId =
+      request.params
+        ?.businessId;
+
     if (!businessId) {
-      throw new Error('Business ID is required.');
+      throw new Error(
+        'Business ID is required.',
+      );
     }
+
     return businessId;
   }
 
-  private userId(request: RequestLike) {
+  private userId(
+    request: RequestLike,
+  ) {
     const userId =
       request.user?.id ||
-      request.user?.userId ||
+      request.user
+        ?.userId ||
       request.user?.sub;
+
     if (!userId) {
-      throw new Error('Authenticated user is required.');
+      throw new Error(
+        'Authenticated user is required.',
+      );
     }
+
     return String(userId);
   }
 }
