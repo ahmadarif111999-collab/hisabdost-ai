@@ -1,257 +1,421 @@
 import { Injectable } from '@nestjs/common';
-import { AccountingReportingService } from './accounting-reporting.service';
-import { FinancialStatementsService } from './financial-statements.service';
-import { BusinessesService } from '../businesses/businesses.service';
+import * as ExcelJS from 'exceljs';
 import { PrismaService } from '../../prisma/prisma.service';
-import {
-  buildWorkbookXlsxBase64,
-  WorkbookSheet,
-  XlsxRow,
-  XlsxValue,
-} from '../../common/xlsx-export.util';
+import { ReferenceNumbersService } from '../reference-numbers/reference-numbers.service';
+import { ReferencePresentationService } from '../reference-numbers/reference-presentation.service';
+import { AccountingReportingService } from './accounting-reporting.service';
+
+type AnyRecord = Record<string, any>;
+
+type PreviewSection = {
+  title?: string;
+  columns?: string[];
+  rows?: AnyRecord[];
+  totals?: AnyRecord;
+};
 
 @Injectable()
 export class XlsxExportService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly businesses: BusinessesService,
     private readonly reporting: AccountingReportingService,
-    private readonly financialStatements: FinancialStatementsService,
+    private readonly references: ReferenceNumbersService,
+    private readonly presentation: ReferencePresentationService,
   ) {}
 
-  async exportReport(userId: string, businessId: string, dto: any) {
-    const preview = await this.reporting.preview(userId, businessId, {
-      ...dto,
-      format: 'xlsx',
-    });
-
-    const business = await this.businesses.getAccessibleBusiness(userId, businessId);
-
-    const workbook = buildWorkbookXlsxBase64(this.reportPreviewToWorkbook(preview));
-    const filename = this.safeFilename(
-      `${preview.reportType || 'report'}-${preview.filters?.startDate || 'from'}-to-${
-        preview.filters?.endDate || 'to'
-      }.xlsx`,
+  async exportReport(
+    userId: string,
+    businessId: string,
+    dto: AnyRecord,
+  ) {
+    const rawPreview = await (this.reporting as any).preview(
+      userId,
+      businessId,
+      dto,
+    );
+    const preview = await this.presentation.decorateReportPreview(
+      businessId,
+      dto,
+      rawPreview,
+    );
+    const reportType = String(
+      dto?.reportType || dto?.type || preview?.title || 'report',
     );
 
-    await this.prisma.reportExportLog.create({
-      data: {
-        organizationId: business.organizationId,
-        businessId,
-        userId,
-        reportType: preview.reportType || dto.reportType || 'report',
-        format: 'xlsx',
-        dateFrom: preview.filters?.startDate ? new Date(preview.filters.startDate) : null,
-        dateTo: preview.filters?.endDate ? new Date(preview.filters.endDate) : null,
-        selectedHeadsJson: dto.accountCodes || [],
-        filtersJson: dto,
-        filename,
-      },
-    });
-
-    return {
-      filename,
-      mimeType: workbook.mimeType,
-      contentBase64: workbook.contentBase64,
-      message: 'XLSX report exported.',
-    };
-  }
-
-  async exportFinancialStatements(userId: string, businessId: string, dto: any) {
-    const preview = await this.financialStatements.preview(userId, businessId, {
-      startDate: dto.startDate,
-      endDate: dto.endDate,
-      includeZeroBalances: dto.includeZeroBalances,
-    });
-
-    const business = await this.businesses.getAccessibleBusiness(userId, businessId);
-
-    const workbook = buildWorkbookXlsxBase64(this.financialStatementsToWorkbook(preview));
-    const filename = this.safeFilename(
-      `financial-statements-${preview.filters?.startDate || 'from'}-to-${
-        preview.filters?.endDate || 'to'
-      }.xlsx`,
+    return this.buildWorkbookResult(
+      userId,
+      businessId,
+      reportType,
+      dto,
+      [preview],
     );
-
-    await this.prisma.reportExportLog.create({
-      data: {
-        organizationId: business.organizationId,
-        businessId,
-        userId,
-        reportType: 'financial-statements',
-        format: 'xlsx',
-        dateFrom: preview.filters?.startDate ? new Date(preview.filters.startDate) : null,
-        dateTo: preview.filters?.endDate ? new Date(preview.filters.endDate) : null,
-        selectedHeadsJson: [],
-        filtersJson: dto,
-        filename,
-      },
-    });
-
-    return {
-      filename,
-      mimeType: workbook.mimeType,
-      contentBase64: workbook.contentBase64,
-      message: 'Financial statements XLSX exported.',
-    };
   }
 
-  private reportPreviewToWorkbook(preview: any): WorkbookSheet[] {
-    const rows: XlsxRow[] = [];
+  async exportFinancialStatements(
+    userId: string,
+    businessId: string,
+    dto: AnyRecord,
+  ) {
+    const requestedTypes = this.statementTypes(dto);
+    const previews: AnyRecord[] = [];
 
-    rows.push({ values: [preview.title || 'Report'], style: 2 });
-    rows.push({ values: ['Client', preview.clientName || '-'] });
-    rows.push({ values: ['Subtitle', preview.subtitle || '-'] });
-    rows.push({ values: ['Generated At', preview.generatedAt || '-'] });
-    rows.push({ values: ['Timezone', preview.timezone || 'Asia/Karachi'] });
-    rows.push({
-      values: [
-        'Period',
-        `${preview.filters?.startDateDisplay || preview.filters?.startDate || '-'} to ${
-          preview.filters?.endDateDisplay || preview.filters?.endDate || '-'
-        }`,
-      ],
-    });
-    rows.push({ values: [] });
-
-    for (const section of preview.sections || []) {
-      this.appendSection(rows, section);
+    for (const reportType of requestedTypes) {
+      try {
+        const request = { ...dto, reportType };
+        const rawPreview = await (this.reporting as any).preview(
+          userId,
+          businessId,
+          request,
+        );
+        previews.push(
+          await this.presentation.decorateReportPreview(
+            businessId,
+            request,
+            rawPreview,
+          ),
+        );
+      } catch (error) {
+        if (requestedTypes.length === 1) {
+          throw error;
+        }
+      }
     }
 
-    return [
-      {
-        name: preview.title || preview.reportType || 'Report',
-        rows,
-      },
-    ];
+    if (!previews.length) {
+      const fallbackType = String(dto?.reportType || 'profit-loss');
+      const request = { ...dto, reportType: fallbackType };
+      const rawPreview = await (this.reporting as any).preview(
+        userId,
+        businessId,
+        request,
+      );
+      previews.push(
+        await this.presentation.decorateReportPreview(
+          businessId,
+          request,
+          rawPreview,
+        ),
+      );
+    }
+
+    return this.buildWorkbookResult(
+      userId,
+      businessId,
+      'financial-statements',
+      dto,
+      previews,
+    );
   }
 
-  private financialStatementsToWorkbook(preview: any): WorkbookSheet[] {
-    const coverRows: XlsxRow[] = [
-      { values: ['Financial Statements'], style: 2 },
-      { values: ['Client', preview.clientName || '-'] },
-      {
-        values: [
-          'Period',
-          `${preview.filters?.startDateDisplay || preview.filters?.startDate || '-'} to ${
-            preview.filters?.endDateDisplay || preview.filters?.endDate || '-'
-          }`,
-        ],
-      },
-      { values: ['Generated At', preview.generatedAt || '-'] },
-      { values: ['Timezone', preview.timezone || 'Asia/Karachi'] },
-      { values: [] },
-      { values: ['Statements included'], style: 3 },
-      ...(preview.statements || []).map((statement: any) => ({
-        values: [statement.title],
-      })),
-      { values: [] },
-      {
-        values: [
-          'Note',
-          'These beta financial statements are for internal accountant review before client, tax, bank, or regulatory use.',
-        ],
-      },
+  private async buildWorkbookResult(
+    userId: string,
+    businessId: string,
+    reportType: string,
+    filters: AnyRecord,
+    previews: AnyRecord[],
+  ) {
+    const business = await (this.prisma as any).business.findUnique({
+      where: { id: businessId },
+    });
+    const provisionalFilename = `pending-${this.fileSlug(reportType)}.xlsx`;
+    const exportRecord = await this.presentation.createExportRecord(
+      userId,
+      businessId,
+      reportType,
+      'xlsx',
+      provisionalFilename,
+      filters,
+    );
+    const exportNo = await this.references.attachReference(
+      businessId,
+      'report_export',
+      exportRecord.id,
+      exportRecord.createdAt || new Date(),
+    );
+    const filename = `${exportNo}-${this.fileSlug(reportType)}-${this.dateStamp()}.xlsx`;
+    const workbook = new ExcelJS.Workbook();
+
+    workbook.creator = 'ProBiz AI / HisabDost AI';
+    workbook.lastModifiedBy = 'ProBiz AI / HisabDost AI';
+    workbook.created = new Date();
+    workbook.modified = new Date();
+    workbook.title = `${exportNo} — ${this.humanTitle(reportType)}`;
+    workbook.subject = `Permanent export reference ${exportNo}`;
+    workbook.description =
+      `Generated by ProBiz AI / HisabDost AI. Export reference: ${exportNo}.`;
+    (workbook as any).company = business?.name || 'ProBiz AI';
+
+    this.addCoverSheet(
+      workbook,
+      exportNo,
+      reportType,
+      business,
+      filters,
+    );
+
+    previews.forEach((preview, previewIndex) => {
+      this.addPreviewSheets(workbook, preview, previewIndex);
+    });
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const nodeBuffer = Buffer.from(buffer as any);
+    const base64 = nodeBuffer.toString('base64');
+
+    await this.presentation.updateExportRecord(exportRecord.id, filename, {
+      ...filters,
+      exportReference: exportNo,
+      reportType,
+    });
+
+    return {
+      exportNo,
+      referenceNo: exportNo,
+      displayNumber: exportNo,
+      filename,
+      mimeType:
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      base64,
+      contentBase64: base64,
+      fileBase64: base64,
+      size: nodeBuffer.length,
+      generatedAt: new Date().toISOString(),
+      message: `${exportNo} generated successfully.`,
+    };
+  }
+
+  private addCoverSheet(
+    workbook: ExcelJS.Workbook,
+    exportNo: string,
+    reportType: string,
+    business: AnyRecord | null,
+    filters: AnyRecord,
+  ) {
+    const sheet = workbook.addWorksheet('Export Details');
+    (sheet.properties as any).tabColor = { argb: 'FF1F4E78' };
+    sheet.columns = [
+      { key: 'label', width: 30 },
+      { key: 'value', width: 70 },
     ];
 
-    const statementSheets = (preview.statements || []).map((statement: any) => {
-      const rows: XlsxRow[] = [];
+    sheet.mergeCells('A1:B1');
+    const titleCell = sheet.getCell('A1');
+    titleCell.value = this.humanTitle(reportType);
+    titleCell.font = { bold: true, size: 18 };
+    titleCell.alignment = { vertical: 'middle', horizontal: 'left' };
+    sheet.getRow(1).height = 28;
 
-      rows.push({ values: [statement.title || 'Statement'], style: 2 });
-      rows.push({ values: ['Subtitle', statement.subtitle || '-'] });
-      rows.push({ values: ['Client', preview.clientName || '-'] });
-      rows.push({ values: ['Generated At', preview.generatedAt || '-'] });
-      rows.push({ values: [] });
+    const details: Array<[string, unknown]> = [
+      ['Export Reference', exportNo],
+      ['Business', business?.name || 'Business'],
+      ['Report Type', this.humanTitle(reportType)],
+      ['Generated At (Pakistan Time)', this.pakistanDateTime(new Date())],
+      ['Start Date', filters?.startDate || filters?.fromDate || 'Not specified'],
+      ['End Date', filters?.endDate || filters?.toDate || 'Not specified'],
+      ['Account', filters?.accountName || (filters?.accountId ? 'Selected account' : 'All')],
+      ['Status', 'Completed'],
+    ];
 
-      for (const section of statement.sections || []) {
-        this.appendSection(rows, section);
+    details.forEach(([label, value], index) => {
+      const row = sheet.getRow(index + 3);
+      row.getCell(1).value = label;
+      row.getCell(1).font = { bold: true };
+      row.getCell(2).value = this.cellValue(value);
+    });
+
+    sheet.addRow([]);
+    const noteRow = sheet.addRow([
+      'Note',
+      'Internal database IDs are intentionally excluded from this workbook.',
+    ]);
+    noteRow.getCell(1).font = { bold: true };
+    sheet.views = [{ state: 'frozen', ySplit: 2 }];
+  }
+
+  private addPreviewSheets(
+    workbook: ExcelJS.Workbook,
+    preview: AnyRecord,
+    previewIndex: number,
+  ) {
+    const sections: PreviewSection[] = preview?.sections || [];
+
+    if (!sections.length) {
+      const sheet = workbook.addWorksheet(
+        this.uniqueSheetName(
+          workbook,
+          preview?.title || `Report ${previewIndex + 1}`,
+        ),
+      );
+      sheet.addRow([preview?.title || 'Report']);
+      sheet.addRow(['No rows were returned for the selected filters.']);
+      return;
+    }
+
+    sections.forEach((section, sectionIndex) => {
+      const baseName =
+        section.title ||
+        preview?.title ||
+        `Report ${previewIndex + 1}-${sectionIndex + 1}`;
+      const sheet = workbook.addWorksheet(
+        this.uniqueSheetName(workbook, baseName),
+      );
+      const rows = section.rows || [];
+      const columns =
+        section.columns?.length
+          ? section.columns
+          : rows.length
+            ? Object.keys(rows[0])
+            : [];
+
+      sheet.mergeCells(1, 1, 1, Math.max(columns.length, 1));
+      const heading = sheet.getCell(1, 1);
+      heading.value = section.title || preview?.title || 'Report';
+      heading.font = { bold: true, size: 15 };
+      sheet.getRow(1).height = 24;
+
+      if (preview?.subtitle) {
+        sheet.mergeCells(2, 1, 2, Math.max(columns.length, 1));
+        sheet.getCell(2, 1).value = preview.subtitle;
       }
 
-      return {
-        name: statement.title || statement.key || 'Statement',
-        rows,
-      };
-    });
-
-    return [
-      {
-        name: 'Cover',
-        rows: coverRows,
-      },
-      ...statementSheets,
-    ];
-  }
-
-  private appendSection(rows: XlsxRow[], section: any) {
-    rows.push({ values: [section.title || 'Section'], style: 3 });
-
-    if (section.note) {
-      rows.push({ values: ['Note', section.note] });
-    }
-
-    const columns = section.columns || [];
-
-    if (columns.length) {
-      rows.push({
-        values: columns.map((column: any) => column.label || column.key),
-        style: 1,
+      const headerRowNumber = preview?.subtitle ? 4 : 3;
+      const headerRow = sheet.getRow(headerRowNumber);
+      columns.forEach((column, columnIndex) => {
+        const cell = headerRow.getCell(columnIndex + 1);
+        cell.value = this.humanTitle(column);
+        cell.font = { bold: true };
+        cell.alignment = { vertical: 'middle', horizontal: 'left' };
       });
-    }
 
-    for (const row of section.rows || []) {
-      rows.push({
-        values: columns.map((column: any) => this.value(row[column.key])),
-        style: 4,
-      });
-    }
-
-    if (section.totals) {
-      rows.push({ values: [] });
-      rows.push({ values: ['Totals'], style: 3 });
-
-      for (const [key, value] of Object.entries(section.totals)) {
-        rows.push({
-          values: [this.labelize(key), this.value(value)],
-          style: 4,
+      rows.forEach((row) => {
+        const worksheetRow = sheet.addRow(
+          columns.map((column) => this.cellValue(row[column])),
+        );
+        columns.forEach((column, columnIndex) => {
+          const value = row[column];
+          const cell = worksheetRow.getCell(columnIndex + 1);
+          if (typeof value === 'number') {
+            cell.numFmt = '#,##0.00;[Red]-#,##0.00';
+          }
         });
+      });
+
+      if (section.totals && Object.keys(section.totals).length) {
+        sheet.addRow([]);
+        const totalsHeading = sheet.addRow(['Totals']);
+        totalsHeading.getCell(1).font = { bold: true };
+        for (const [label, value] of Object.entries(section.totals)) {
+          const row = sheet.addRow([this.humanTitle(label), this.cellValue(value)]);
+          row.getCell(1).font = { bold: true };
+          if (typeof value === 'number') {
+            row.getCell(2).numFmt = '#,##0.00;[Red]-#,##0.00';
+          }
+        }
       }
-    }
 
-    rows.push({ values: [] });
+      columns.forEach((column, columnIndex) => {
+        const maxContent = Math.max(
+          this.humanTitle(column).length,
+          ...rows.slice(0, 200).map((row) =>
+            String(row[column] ?? '').length,
+          ),
+        );
+        sheet.getColumn(columnIndex + 1).width = Math.min(
+          Math.max(maxContent + 2, 12),
+          45,
+        );
+      });
+      sheet.autoFilter = {
+        from: { row: headerRowNumber, column: 1 },
+        to: {
+          row: headerRowNumber,
+          column: Math.max(columns.length, 1),
+        },
+      };
+      sheet.views = [{ state: 'frozen', ySplit: headerRowNumber }];
+    });
   }
 
-  private value(value: any): XlsxValue {
-    if (value === null || value === undefined) return '';
-
-    if (typeof value === 'number') {
-      return Number.isFinite(value) ? value : 0;
+  private statementTypes(dto: AnyRecord) {
+    const explicit = dto?.reportTypes || dto?.statementTypes;
+    if (Array.isArray(explicit) && explicit.length) {
+      return explicit.map((value) => String(value));
     }
-
-    if (typeof value === 'boolean') {
-      return value;
+    if (dto?.reportType && dto.reportType !== 'financial-statements') {
+      return [String(dto.reportType)];
     }
-
-    if (value instanceof Date) {
-      return value;
-    }
-
-    return String(value);
+    return [
+      'profit-loss',
+      'balance-sheet',
+      'cash-flow',
+      'changes-in-equity',
+      'notes',
+    ];
   }
 
-  private labelize(value: string) {
-    return String(value || '')
-      .replace(/([A-Z])/g, ' $1')
-      .replace(/[_-]+/g, ' ')
+  private uniqueSheetName(
+    workbook: ExcelJS.Workbook,
+    requestedName: string,
+  ) {
+    const clean = this.humanTitle(requestedName)
+      .replace(/[\\/?*\[\]:]/g, ' ')
       .replace(/\s+/g, ' ')
       .trim()
-      .replace(/^./, (char) => char.toUpperCase());
+      .slice(0, 31) || 'Report';
+    let name = clean;
+    let suffix = 2;
+    while (workbook.getWorksheet(name)) {
+      const suffixText = ` ${suffix++}`;
+      name = `${clean.slice(0, 31 - suffixText.length)}${suffixText}`;
+    }
+    return name;
   }
 
-  private safeFilename(value: string) {
-    return value
-      .replace(/[^a-zA-Z0-9._-]+/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '')
-      .toLowerCase();
+  private humanTitle(value: unknown) {
+    return String(value || '')
+      .replace(/[_-]+/g, ' ')
+      .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/\b\w/g, (letter) => letter.toUpperCase());
+  }
+
+  private fileSlug(value: string) {
+    return String(value || 'report')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'report';
+  }
+
+  private dateStamp() {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Karachi',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    })
+      .format(new Date())
+      .replace(/\//g, '-');
+  }
+
+  private pakistanDateTime(value: Date) {
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Karachi',
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true,
+    }).format(value);
+  }
+
+  private cellValue(value: unknown): ExcelJS.CellValue {
+    if (value == null) return '';
+    if (value instanceof Date) return value;
+    if (typeof value === 'number' || typeof value === 'boolean') return value;
+    if (typeof value === 'object') return JSON.stringify(value);
+    return String(value);
   }
 }
