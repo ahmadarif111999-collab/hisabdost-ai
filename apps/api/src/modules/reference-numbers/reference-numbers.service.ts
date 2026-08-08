@@ -11,6 +11,7 @@ const PREFIXES: Record<string, string> = {
   journal: 'JE',
   invoice: 'INV',
   payment: 'PAY',
+  receipt: 'REC',
   expense: 'EXP',
   purchase: 'PUR',
   report_request: 'RPT',
@@ -30,7 +31,6 @@ export class ReferenceNumbersService {
     const date = this.validDate(referenceDate);
     const year = this.pakistanYear(date);
     const prefix = this.prefix(entityType);
-
     const sequence = await this.prisma.businessReferenceSequence.upsert({
       where: {
         businessId_entityType_year: {
@@ -65,6 +65,150 @@ export class ReferenceNumbersService {
     referenceDate: Date | string,
     preferredReferenceNo?: string,
   ) {
+    if (entityType === 'payment') {
+      const payment = await this.prisma.payment.findFirst({
+        where: {
+          id: entityId,
+          businessId,
+        },
+        select: {
+          direction: true,
+          paymentDate: true,
+        },
+      });
+
+      if (payment?.direction === 'received') {
+        const receiptNo = await this.attachStandardReference(
+          businessId,
+          'receipt',
+          entityId,
+          payment.paymentDate || referenceDate,
+          preferredReferenceNo?.startsWith('REC-')
+            ? preferredReferenceNo
+            : undefined,
+        );
+
+        await this.removeStalePaymentReferences(businessId, [entityId]);
+        return receiptNo;
+      }
+    }
+
+    return this.attachStandardReference(
+      businessId,
+      entityType,
+      entityId,
+      referenceDate,
+      preferredReferenceNo,
+    );
+  }
+
+  async ensureMany(
+    businessId: string,
+    entityType: string,
+    records: ReferenceRecord[],
+  ): Promise<Record<string, string>> {
+    if (!records.length) {
+      return {};
+    }
+
+    if (entityType !== 'payment') {
+      return this.ensureManyStandard(businessId, entityType, records);
+    }
+
+    await this.backfillReceivedPaymentReferences(businessId);
+
+    const uniqueRecords = this.uniqueRecords(records);
+    const payments = await this.prisma.payment.findMany({
+      where: {
+        businessId,
+        id: {
+          in: uniqueRecords.map((record) => record.id),
+        },
+      },
+      select: {
+        id: true,
+        direction: true,
+        paymentDate: true,
+      },
+    });
+    const paymentMap = new Map<
+      string,
+      { id: string; direction: string; paymentDate: Date }
+    >(payments.map((payment) => [payment.id, payment]));
+    const receivedRecords: ReferenceRecord[] = [];
+    const paidRecords: ReferenceRecord[] = [];
+
+    for (const record of uniqueRecords) {
+      const payment = paymentMap.get(record.id);
+      if (payment?.direction === 'received') {
+        receivedRecords.push({
+          id: record.id,
+          date: payment.paymentDate || record.date,
+        });
+      } else {
+        paidRecords.push(record);
+      }
+    }
+
+    const [paymentReferences, receiptReferences] = await Promise.all([
+      this.ensureManyStandard(businessId, 'payment', paidRecords),
+      this.ensureManyStandard(businessId, 'receipt', receivedRecords),
+    ]);
+
+    if (receivedRecords.length) {
+      await this.removeStalePaymentReferences(
+        businessId,
+        receivedRecords.map((record) => record.id),
+      );
+    }
+
+    return {
+      ...paymentReferences,
+      ...receiptReferences,
+    };
+  }
+
+  private async backfillReceivedPaymentReferences(businessId: string) {
+    const receivedPayments = await this.prisma.payment.findMany({
+      where: {
+        businessId,
+        direction: 'received',
+      },
+      orderBy: [
+        { paymentDate: 'asc' },
+        { id: 'asc' },
+      ],
+      select: {
+        id: true,
+        paymentDate: true,
+      },
+    });
+
+    if (!receivedPayments.length) {
+      return;
+    }
+
+    await this.ensureManyStandard(
+      businessId,
+      'receipt',
+      receivedPayments.map((payment) => ({
+        id: payment.id,
+        date: payment.paymentDate,
+      })),
+    );
+    await this.removeStalePaymentReferences(
+      businessId,
+      receivedPayments.map((payment) => payment.id),
+    );
+  }
+
+  private async attachStandardReference(
+    businessId: string,
+    entityType: string,
+    entityId: string,
+    referenceDate: Date | string,
+    preferredReferenceNo?: string,
+  ) {
     const existing = await this.prisma.businessReference.findUnique({
       where: {
         businessId_entityType_entityId: {
@@ -80,7 +224,6 @@ export class ReferenceNumbersService {
     }
 
     const date = this.validDate(referenceDate);
-
     const referenceNo =
       preferredReferenceNo ||
       (await this.nextReferenceNo(businessId, entityType, date));
@@ -118,7 +261,7 @@ export class ReferenceNumbersService {
     }
   }
 
-  async ensureMany(
+  private async ensureManyStandard(
     businessId: string,
     entityType: string,
     records: ReferenceRecord[],
@@ -127,10 +270,7 @@ export class ReferenceNumbersService {
       return {};
     }
 
-    const uniqueRecords = Array.from(
-      new Map(records.map((record) => [record.id, record])).values(),
-    );
-
+    const uniqueRecords = this.uniqueRecords(records);
     const existing = await this.prisma.businessReference.findMany({
       where: {
         businessId,
@@ -144,15 +284,12 @@ export class ReferenceNumbersService {
         referenceNo: true,
       },
     });
-
     const existingIds = new Set(
       existing.map((reference) => reference.entityId),
     );
-
     const missing = uniqueRecords.filter(
       (record) => !existingIds.has(record.id),
     );
-
     const groups = new Map<number, ReferenceRecord[]>();
 
     for (const record of missing) {
@@ -164,7 +301,6 @@ export class ReferenceNumbersService {
         id: record.id,
         date,
       });
-
       groups.set(year, group);
     }
 
@@ -223,7 +359,6 @@ export class ReferenceNumbersService {
     }
 
     const prefix = this.prefix(entityType);
-
     await this.prisma.$transaction(async (tx) => {
       const sequence = await tx.businessReferenceSequence.upsert({
         where: {
@@ -248,9 +383,7 @@ export class ReferenceNumbersService {
           lastNumber: true,
         },
       });
-
-      const firstNumber =
-        sequence.lastNumber - records.length + 1;
+      const firstNumber = sequence.lastNumber - records.length + 1;
 
       await tx.businessReference.createMany({
         data: records.map((record, index) => ({
@@ -267,6 +400,31 @@ export class ReferenceNumbersService {
         skipDuplicates: true,
       });
     });
+  }
+
+  private async removeStalePaymentReferences(
+    businessId: string,
+    receivedPaymentIds: string[],
+  ) {
+    if (!receivedPaymentIds.length) {
+      return;
+    }
+
+    await this.prisma.businessReference.deleteMany({
+      where: {
+        businessId,
+        entityType: 'payment',
+        entityId: {
+          in: Array.from(new Set(receivedPaymentIds)),
+        },
+      },
+    });
+  }
+
+  private uniqueRecords(records: ReferenceRecord[]) {
+    return Array.from(
+      new Map(records.map((record) => [record.id, record])).values(),
+    );
   }
 
   private prefix(entityType: string) {
@@ -294,8 +452,7 @@ export class ReferenceNumbersService {
   }
 
   private validDate(value: Date | string) {
-    const date =
-      value instanceof Date ? value : new Date(value);
+    const date = value instanceof Date ? value : new Date(value);
 
     if (Number.isNaN(date.getTime())) {
       return new Date();
@@ -307,7 +464,7 @@ export class ReferenceNumbersService {
   private isUniqueConflict(error: unknown) {
     return (
       error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === 'P2002'
+      (error as Prisma.PrismaClientKnownRequestError).code === 'P2002'
     );
   }
 }
