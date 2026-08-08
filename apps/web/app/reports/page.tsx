@@ -26,103 +26,56 @@ const apiFetch = ((ApiModule as any).apiFetch ||
   options?: RequestInit,
 ) => Promise<any>;
 
-type ReportType =
-  | 'profit-loss'
-  | 'balance-sheet'
-  | 'trial-balance'
-  | 'general-ledger'
-  | 'sales'
-  | 'purchases'
-  | 'expenses'
-  | 'cash-bank'
-  | 'tax-summary'
-  | 'missing-documents';
+type RequestStatus =
+  | 'pending'
+  | 'approved'
+  | 'rejected'
+  | 'exporting'
+  | 'exported'
+  | string;
 
-type ReportRow = Record<string, any>;
-
-type ReportSection = {
-  title?: string;
-  columns?: string[];
-  rows?: ReportRow[];
-  totals?: Record<string, any>;
+type Person = {
+  name?: string | null;
+  email?: string | null;
 };
 
-type ReportPreview = {
-  title?: string;
-  subtitle?: string;
-  generatedAt?: string;
-  sections?: ReportSection[];
-};
-
-type AccountOption = {
+type ReportRequest = {
   id: string;
-  name: string;
-  code?: string;
+  businessId: string;
+  requestNo?: string;
+  referenceNo?: string;
+  reportRequestNo?: string;
+  exportNo?: string | null;
+  completedFilename?: string | null;
+  completedAt?: string | null;
+  reportType: string;
+  status: RequestStatus;
+  requestedAt?: string;
+  createdAt?: string;
+  decidedAt?: string | null;
+  decisionNote?: string | null;
+  requestedBy?: Person | null;
+  decidedBy?: Person | null;
+  requestedByName?: string | null;
+  decidedByName?: string | null;
+  business?: {
+    name?: string | null;
+    legalName?: string | null;
+  } | null;
+  filtersJson?: Record<string, any> | string | null;
+  format?: string | null;
 };
 
-const REPORT_OPTIONS: Array<{
-  value: ReportType;
-  label: string;
-  description: string;
-}> = [
-  {
-    value: 'profit-loss',
-    label: 'Profit & Loss',
-    description: 'Income, expenses, and profit for the selected period.',
-  },
-  {
-    value: 'balance-sheet',
-    label: 'Balance Sheet',
-    description: 'Assets, liabilities, and equity as of the end date.',
-  },
-  {
-    value: 'trial-balance',
-    label: 'Trial Balance',
-    description: 'Account balances with debit and credit totals.',
-  },
-  {
-    value: 'general-ledger',
-    label: 'General Ledger',
-    description: 'Detailed account activity with permanent JE references.',
-  },
-  {
-    value: 'sales',
-    label: 'Sales Register',
-    description: 'Invoices with permanent INV references.',
-  },
-  {
-    value: 'purchases',
-    label: 'Purchase Register',
-    description: 'Purchases with PUR, JE, and DOC references.',
-  },
-  {
-    value: 'expenses',
-    label: 'Expense Register',
-    description: 'Expenses with EXP, JE, and DOC references.',
-  },
-  {
-    value: 'cash-bank',
-    label: 'Cash & Bank',
-    description: 'Balances and the REC/PAY payment register.',
-  },
-  {
-    value: 'tax-summary',
-    label: 'Tax Summary',
-    description: 'Tax-sensitive account totals for the selected period.',
-  },
-  {
-    value: 'missing-documents',
-    label: 'Missing Documents',
-    description: 'Transactions still requiring a receipt or document.',
-  },
-];
+type AccessMode = 'firm' | 'client';
 
-function localDate(value: Date) {
-  const year = value.getFullYear();
-  const month = String(value.getMonth() + 1).padStart(2, '0');
-  const day = String(value.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
+const STATUS_OPTIONS = [
+  'all',
+  'pending',
+  'approved',
+  'exporting',
+  'exported',
+  'rejected',
+] as const;
 
 function resolveBusinessId() {
   if (typeof window === 'undefined') return '';
@@ -136,9 +89,7 @@ function resolveBusinessId() {
     const value = window.localStorage.getItem(key);
     if (value) return value;
   }
-
-  const objectKeys = ['activeBusiness', 'selectedBusiness', 'activeClient'];
-  for (const key of objectKeys) {
+  for (const key of ['activeBusiness', 'selectedBusiness', 'activeClient']) {
     const value = window.localStorage.getItem(key);
     if (!value) continue;
     try {
@@ -152,9 +103,75 @@ function resolveBusinessId() {
   return '';
 }
 
+function normalizeRequests(response: any): ReportRequest[] {
+  const records = Array.isArray(response)
+    ? response
+    : response?.requests ||
+      response?.items ||
+      response?.data?.requests ||
+      response?.data?.items ||
+      response?.data ||
+      [];
+  return Array.isArray(records)
+    ? records.filter((record) => record?.id && record?.businessId)
+    : [];
+}
+
 function normalizedError(error: unknown) {
   if (error instanceof Error) return error.message;
   return 'The request could not be completed.';
+}
+
+function humanize(value: string) {
+  return String(value || '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function pakistanDateTime(value?: string | null) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Karachi',
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  }).format(date);
+}
+
+function personLabel(person?: Person | null, fallback?: string | null) {
+  return person?.name || person?.email || fallback || 'Unknown user';
+}
+
+function jsonObject(value: ReportRequest['filtersJson']) {
+  let parsed: Record<string, any> = {};
+  if (!value) return parsed;
+  if (typeof value === 'string') {
+    try {
+      const candidate = JSON.parse(value);
+      parsed =
+        candidate && typeof candidate === 'object' ? candidate : {};
+    } catch {
+      return {};
+    }
+  } else {
+    parsed = value;
+  }
+
+  const nested =
+    parsed.filters &&
+    typeof parsed.filters === 'object' &&
+    !Array.isArray(parsed.filters)
+      ? parsed.filters
+      : {};
+  return { ...nested, ...parsed };
 }
 
 function triggerDownload(base64: string, filename: string, mimeType: string) {
@@ -174,48 +191,32 @@ function triggerDownload(base64: string, filename: string, mimeType: string) {
   window.URL.revokeObjectURL(url);
 }
 
-function humanize(value: string) {
-  return value
-    .replace(/[_-]+/g, ' ')
-    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
-
-function displayValue(column: string, value: any) {
-  if (value == null || value === '') return '—';
-  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
-  if (typeof value === 'object') return JSON.stringify(value);
-  if (typeof value === 'number') {
-    const financialColumn = /amount|debit|credit|balance|tax|total|received|paid|profit|loss|income|expense/i.test(
-      column,
-    );
-    return financialColumn
-      ? value.toLocaleString('en-US', {
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 2,
-        })
-      : value.toLocaleString('en-US');
+function statusClass(status: string) {
+  switch (status) {
+    case 'approved':
+      return 'border-blue-200 bg-blue-50 text-blue-800';
+    case 'exporting':
+      return 'border-amber-200 bg-amber-50 text-amber-800';
+    case 'exported':
+      return 'border-emerald-200 bg-emerald-50 text-emerald-800';
+    case 'rejected':
+      return 'border-red-200 bg-red-50 text-red-800';
+    default:
+      return 'border-slate-200 bg-slate-50 text-slate-700';
   }
-  return String(value);
 }
 
-export default function ReportsPage() {
-  const today = useMemo(() => new Date(), []);
+export default function ReportRequestsPage() {
   const [businessId, setBusinessId] = useState('');
-  const [reportType, setReportType] = useState<ReportType>('profit-loss');
-  const [startDate, setStartDate] = useState(
-    localDate(new Date(today.getFullYear(), 0, 1)),
+  const [mode, setMode] = useState<AccessMode>('client');
+  const [requests, setRequests] = useState<ReportRequest[]>([]);
+  const [statusFilter, setStatusFilter] = useState<(typeof STATUS_OPTIONS)[number]>(
+    'all',
   );
-  const [endDate, setEndDate] = useState(localDate(today));
-  const [accountId, setAccountId] = useState('');
-  const [accounts, setAccounts] = useState<AccountOption[]>([]);
-  const [preview, setPreview] = useState<ReportPreview | null>(null);
   const [search, setSearch] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [exporting, setExporting] = useState(false);
-  const [requesting, setRequesting] = useState(false);
+  const [notes, setNotes] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+  const [workingId, setWorkingId] = useState('');
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
 
@@ -226,7 +227,6 @@ export default function ReportsPage() {
         custom?.detail?.businessId || custom?.detail?.id || '';
       setBusinessId(String(eventBusinessId || resolveBusinessId()));
     };
-
     updateBusiness();
     window.addEventListener('storage', updateBusiness);
     window.addEventListener('businessChanged', updateBusiness);
@@ -240,299 +240,222 @@ export default function ReportsPage() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!businessId) {
-      setAccounts([]);
-      return;
-    }
-
-    let cancelled = false;
-    apiFetch(`/accounting/businesses/${businessId}/accounts`)
-      .then((response) => {
-        if (cancelled) return;
-        const records = Array.isArray(response)
-          ? response
-          : response?.accounts || response?.items || [];
-        setAccounts(
-          records
-            .filter((record: any) => record?.id)
-            .map((record: any) => ({
-              id: String(record.id),
-              name:
-                record.name ||
-                record.accountName ||
-                record.displayName ||
-                'Unnamed account',
-              code: record.code || record.accountCode || undefined,
-            })),
-        );
-      })
-      .catch(() => {
-        if (!cancelled) setAccounts([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [businessId]);
-
-  useEffect(() => {
-    setPreview(null);
-    setSearch('');
-    setError('');
-    setMessage('');
-    if (reportType !== 'general-ledger') setAccountId('');
-  }, [reportType, businessId]);
-
-  const requestBody = useCallback(() => {
-    const selectedAccount = accounts.find((account) => account.id === accountId);
-    return {
-      reportType,
-      startDate,
-      endDate,
-      asOfDate: endDate,
-      ...(accountId
-        ? {
-            accountId,
-            accountName: selectedAccount
-              ? `${selectedAccount.code ? `${selectedAccount.code} — ` : ''}${selectedAccount.name}`
-              : 'Selected account',
-          }
-        : {}),
-    };
-  }, [accountId, accounts, endDate, reportType, startDate]);
-
-  const generatePreview = useCallback(async () => {
-    if (!businessId) return;
+  const loadRequests = useCallback(async () => {
     setLoading(true);
     setError('');
-    setMessage('');
     try {
-      const result = await apiFetch(
-        `/accounting/businesses/${businessId}/reporting/preview`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(requestBody()),
-        },
-      );
-      setPreview(result);
-      setMessage('Report preview generated with permanent references.');
+      try {
+        const firmResponse = await apiFetch('/firm/report-export-requests');
+        setRequests(normalizeRequests(firmResponse));
+        setMode('firm');
+      } catch (firmError) {
+        if (!businessId) throw firmError;
+        const clientResponse = await apiFetch(
+          `/accounting/businesses/${businessId}/reporting/export-requests`,
+        );
+        setRequests(normalizeRequests(clientResponse));
+        setMode('client');
+      }
     } catch (requestError) {
-      setPreview(null);
+      setRequests([]);
       setError(normalizedError(requestError));
     } finally {
       setLoading(false);
     }
-  }, [businessId, requestBody]);
+  }, [businessId]);
 
-  const exportXlsx = useCallback(async () => {
-    if (!businessId) return;
-    setExporting(true);
-    setError('');
-    setMessage('');
-    try {
-      const result = await apiFetch(
-        `/accounting/businesses/${businessId}/xlsx/report`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(requestBody()),
-        },
-      );
-      const base64 =
-        result?.base64 || result?.contentBase64 || result?.fileBase64;
-      if (!base64 || !result?.filename) {
-        throw new Error('The export response did not include a file.');
+  useEffect(() => {
+    void loadRequests();
+  }, [loadRequests]);
+
+  const decide = useCallback(
+    async (request: ReportRequest, decision: 'approved' | 'rejected') => {
+      setWorkingId(request.id);
+      setError('');
+      setMessage('');
+      try {
+        const result = await apiFetch(
+          `/accounting/businesses/${request.businessId}/reporting/export-requests/${request.id}/decision`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              decision,
+              decisionNote: notes[request.id]?.trim() || undefined,
+            }),
+          },
+        );
+        const requestNo =
+          result?.requestNo ||
+          result?.referenceNo ||
+          result?.request?.requestNo ||
+          request.requestNo ||
+          request.referenceNo;
+        setMessage(
+          result?.message ||
+            `${requestNo || 'Report request'} ${decision}.`,
+        );
+        await loadRequests();
+      } catch (requestError) {
+        setError(normalizedError(requestError));
+      } finally {
+        setWorkingId('');
       }
-      triggerDownload(
-        base64,
-        result.filename,
-        result.mimeType ||
-          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      );
-      setMessage(
-        result.message ||
-          `${result.exportNo || result.referenceNo || 'Export'} downloaded successfully.`,
-      );
-    } catch (requestError) {
-      setError(normalizedError(requestError));
-    } finally {
-      setExporting(false);
-    }
-  }, [businessId, requestBody]);
-
-  const requestExport = useCallback(async () => {
-    if (!businessId) return;
-    setRequesting(true);
-    setError('');
-    setMessage('');
-    try {
-      const result = await apiFetch(
-        `/accounting/businesses/${businessId}/reporting/request-export`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(requestBody()),
-        },
-      );
-      const requestNo =
-        result?.requestNo ||
-        result?.referenceNo ||
-        result?.request?.requestNo ||
-        result?.request?.referenceNo;
-      setMessage(
-        result?.message ||
-          `${requestNo || 'Report export request'} submitted for firm approval.`,
-      );
-    } catch (requestError) {
-      setError(normalizedError(requestError));
-    } finally {
-      setRequesting(false);
-    }
-  }, [businessId, requestBody]);
-
-  const filteredSections = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    return (preview?.sections || []).map((section) => {
-      const rows = section.rows || [];
-      if (!query) return { ...section, rows };
-      return {
-        ...section,
-        rows: rows.filter((row) =>
-          Object.values(row).some((value) =>
-            String(
-              typeof value === 'object' && value !== null
-                ? JSON.stringify(value)
-                : value ?? '',
-            )
-              .toLowerCase()
-              .includes(query),
-          ),
-        ),
-      };
-    });
-  }, [preview, search]);
-
-  const selectedOption = REPORT_OPTIONS.find(
-    (option) => option.value === reportType,
+    },
+    [loadRequests, notes],
   );
+
+  const download = useCallback(
+    async (request: ReportRequest) => {
+      setWorkingId(request.id);
+      setError('');
+      setMessage('');
+      try {
+        const result = await apiFetch(
+          `/accounting/businesses/${request.businessId}/xlsx/approved-request/${request.id}`,
+          { method: 'POST' },
+        );
+        const base64 =
+          result?.base64 || result?.contentBase64 || result?.fileBase64;
+        if (!base64 || !result?.filename) {
+          throw new Error('The approved export response did not include a file.');
+        }
+        triggerDownload(
+          base64,
+          result.filename,
+          result.mimeType ||
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        );
+        setMessage(
+          result?.message ||
+            `${result?.requestNo || request.requestNo || 'Request'} completed as ${
+              result?.exportNo || result?.referenceNo || 'an EX export'
+            }.`,
+        );
+        await loadRequests();
+      } catch (requestError) {
+        setError(normalizedError(requestError));
+      } finally {
+        setWorkingId('');
+      }
+    },
+    [loadRequests],
+  );
+
+  const filteredRequests = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return requests.filter((request) => {
+      if (statusFilter !== 'all' && request.status !== statusFilter) {
+        return false;
+      }
+      if (!query) return true;
+      const filters = jsonObject(request.filtersJson);
+      const values = [
+        request.requestNo,
+        request.referenceNo,
+        request.reportRequestNo,
+        request.exportNo,
+        request.reportType,
+        request.status,
+        request.business?.name,
+        request.business?.legalName,
+        personLabel(request.requestedBy, request.requestedByName),
+        personLabel(request.decidedBy, request.decidedByName),
+        filters.startDate,
+        filters.endDate,
+        filters.accountName,
+      ];
+      return values.some((value) =>
+        String(value || '').toLowerCase().includes(query),
+      );
+    });
+  }, [requests, search, statusFilter]);
+
+  const metrics = useMemo(() => {
+    return {
+      total: requests.length,
+      pending: requests.filter((request) => request.status === 'pending').length,
+      approved: requests.filter((request) => request.status === 'approved').length,
+      exported: requests.filter((request) => request.status === 'exported').length,
+      rejected: requests.filter((request) => request.status === 'rejected').length,
+    };
+  }, [requests]);
 
   return (
     <AppShell>
       <ClientRequired>
-        <main className="mx-auto w-full max-w-[1600px] space-y-6 px-4 py-6 sm:px-6 lg:px-8">
+        <main className="mx-auto w-full max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                  Accounting reports
+                  {mode === 'firm' ? 'Firm approval queue' : 'Client requests'}
                 </p>
                 <h1 className="mt-1 text-2xl font-bold text-slate-950">
-                  Reports and permanent references
+                  Report export requests
                 </h1>
                 <p className="mt-2 max-w-3xl text-sm text-slate-600">
-                  Preview reports, search EXP/PUR/REC/PAY references, download an
-                  EX-numbered workbook, or submit an RPT-numbered approval request.
+                  Each approval request keeps its permanent RPT reference. A
+                  completed workbook receives a separate permanent EX reference.
                 </p>
               </div>
-              <div className="rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                <span className="font-semibold text-slate-900">Selected:</span>{' '}
-                {selectedOption?.label}
-              </div>
+              <button
+                type="button"
+                onClick={loadRequests}
+                disabled={loading}
+                className="rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-800 disabled:opacity-50"
+              >
+                {loading ? 'Refreshing…' : 'Refresh'}
+              </button>
             </div>
           </section>
 
-          <section className="grid gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:grid-cols-2 xl:grid-cols-5">
-            <label className="space-y-2 xl:col-span-2">
-              <span className="text-sm font-semibold text-slate-800">Report</span>
-              <select
-                value={reportType}
-                onChange={(event) =>
-                  setReportType(event.target.value as ReportType)
+          <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            {Object.entries(metrics).map(([label, value]) => (
+              <button
+                key={label}
+                type="button"
+                onClick={() =>
+                  setStatusFilter(
+                    label === 'total'
+                      ? 'all'
+                      : (label as (typeof STATUS_OPTIONS)[number]),
+                  )
                 }
-                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none ring-blue-500 focus:ring-2"
+                className="rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-slate-300"
               >
-                {REPORT_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <p className="text-xs text-slate-500">
-                {selectedOption?.description}
-              </p>
-            </label>
-
-            <label className="space-y-2">
-              <span className="text-sm font-semibold text-slate-800">
-                Start date
-              </span>
-              <input
-                type="date"
-                value={startDate}
-                onChange={(event) => setStartDate(event.target.value)}
-                className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-blue-500 focus:ring-2"
-              />
-            </label>
-
-            <label className="space-y-2">
-              <span className="text-sm font-semibold text-slate-800">
-                End / as-of date
-              </span>
-              <input
-                type="date"
-                value={endDate}
-                onChange={(event) => setEndDate(event.target.value)}
-                className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-blue-500 focus:ring-2"
-              />
-            </label>
-
-            <label className="space-y-2">
-              <span className="text-sm font-semibold text-slate-800">
-                Ledger account
-              </span>
-              <select
-                value={accountId}
-                onChange={(event) => setAccountId(event.target.value)}
-                disabled={reportType !== 'general-ledger'}
-                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none ring-blue-500 disabled:bg-slate-100 disabled:text-slate-400 focus:ring-2"
-              >
-                <option value="">All / select account</option>
-                {accounts.map((account) => (
-                  <option key={account.id} value={account.id}>
-                    {account.code ? `${account.code} — ` : ''}
-                    {account.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <div className="flex flex-wrap gap-3 md:col-span-2 xl:col-span-5">
-              <button
-                type="button"
-                onClick={generatePreview}
-                disabled={!businessId || loading}
-                className="rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {loading ? 'Generating…' : 'Generate preview'}
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  {humanize(label)}
+                </p>
+                <p className="mt-2 text-2xl font-bold text-slate-950">
+                  {Number(value).toLocaleString('en-US')}
+                </p>
               </button>
-              <button
-                type="button"
-                onClick={exportXlsx}
-                disabled={!businessId || exporting}
-                className="rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {exporting ? 'Preparing XLSX…' : 'Download XLSX'}
-              </button>
-              <button
-                type="button"
-                onClick={requestExport}
-                disabled={!businessId || requesting}
-                className="rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {requesting ? 'Submitting…' : 'Request approved export'}
-              </button>
-            </div>
+            ))}
+          </section>
+
+          <section className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-[220px_1fr]">
+            <select
+              value={statusFilter}
+              onChange={(event) =>
+                setStatusFilter(
+                  event.target.value as (typeof STATUS_OPTIONS)[number],
+                )
+              }
+              className="rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none ring-blue-500 focus:ring-2"
+            >
+              {STATUS_OPTIONS.map((status) => (
+                <option key={status} value={status}>
+                  {status === 'all' ? 'All statuses' : humanize(status)}
+                </option>
+              ))}
+            </select>
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search RPT, EX, report, client, or requester…"
+              className="rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-blue-500 focus:ring-2"
+            />
           </section>
 
           {error ? (
@@ -546,108 +469,197 @@ export default function ReportsPage() {
             </div>
           ) : null}
 
-          {preview ? (
-            <section className="space-y-5">
-              <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:flex-row md:items-center md:justify-between">
-                <div>
-                  <h2 className="text-xl font-bold text-slate-950">
-                    {preview.title || selectedOption?.label}
-                  </h2>
-                  {preview.subtitle ? (
-                    <p className="mt-1 text-sm text-slate-600">
-                      {preview.subtitle}
-                    </p>
-                  ) : null}
-                </div>
-                <label className="w-full md:max-w-md">
-                  <span className="sr-only">Search report rows</span>
-                  <input
-                    value={search}
-                    onChange={(event) => setSearch(event.target.value)}
-                    placeholder="Search EXP, PUR, JE, REC, PAY, DOC, name…"
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-blue-500 focus:ring-2"
-                  />
-                </label>
-              </div>
+          {loading ? (
+            <section className="rounded-2xl border border-slate-200 bg-white px-6 py-14 text-center text-sm text-slate-500 shadow-sm">
+              Loading report requests…
+            </section>
+          ) : filteredRequests.length ? (
+            <section className="space-y-4">
+              {filteredRequests.map((request) => {
+                const filters = jsonObject(request.filtersJson);
+                const requestNo =
+                  request.requestNo ||
+                  request.referenceNo ||
+                  request.reportRequestNo ||
+                  'RPT reference pending';
+                const canDecide = mode === 'firm' && request.status === 'pending';
+                const canDownload = ['approved', 'exported'].includes(
+                  request.status,
+                );
+                const busy = workingId === request.id;
 
-              {filteredSections.map((section, sectionIndex) => {
-                const rows = section.rows || [];
-                const columns =
-                  section.columns?.length
-                    ? section.columns
-                    : rows[0]
-                      ? Object.keys(rows[0])
-                      : [];
                 return (
                   <article
-                    key={`${section.title || 'section'}-${sectionIndex}`}
-                    className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
+                    key={request.id}
+                    className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
                   >
-                    <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
-                      <h3 className="font-bold text-slate-950">
-                        {section.title || `Section ${sectionIndex + 1}`}
-                      </h3>
-                      <span className="text-xs font-medium text-slate-500">
-                        {rows.length.toLocaleString('en-US')} row
-                        {rows.length === 1 ? '' : 's'}
-                      </span>
-                    </div>
-                    <div className="overflow-x-auto">
-                      <table className="min-w-full divide-y divide-slate-200 text-sm">
-                        <thead className="bg-slate-50">
-                          <tr>
-                            {columns.map((column) => (
-                              <th
-                                key={column}
-                                className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-600"
-                              >
-                                {humanize(column)}
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {rows.length ? (
-                            rows.map((row, rowIndex) => (
-                              <tr key={rowIndex} className="hover:bg-slate-50/70">
-                                {columns.map((column) => (
-                                  <td
-                                    key={column}
-                                    className="max-w-[340px] whitespace-nowrap px-4 py-3 text-slate-700"
-                                  >
-                                    {displayValue(column, row[column])}
-                                  </td>
-                                ))}
-                              </tr>
-                            ))
-                          ) : (
-                            <tr>
-                              <td
-                                colSpan={Math.max(columns.length, 1)}
-                                className="px-4 py-10 text-center text-slate-500"
-                              >
-                                No rows match the selected filters or search.
-                              </td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                    {section.totals && Object.keys(section.totals).length ? (
-                      <div className="flex flex-wrap gap-3 border-t border-slate-200 bg-slate-50 px-5 py-4">
-                        {Object.entries(section.totals).map(([label, value]) => (
-                          <div
-                            key={label}
-                            className="rounded-lg border border-slate-200 bg-white px-3 py-2"
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="rounded-lg bg-slate-950 px-2.5 py-1 font-mono text-sm font-semibold text-white">
+                            {requestNo}
+                          </span>
+                          <span
+                            className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${statusClass(
+                              request.status,
+                            )}`}
                           >
-                            <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                              {humanize(label)}
-                            </p>
-                            <p className="mt-1 font-semibold text-slate-950">
-                              {displayValue(label, value)}
-                            </p>
-                          </div>
-                        ))}
+                            {humanize(request.status)}
+                          </span>
+                          {request.exportNo ? (
+                            <span className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 font-mono text-sm font-semibold text-emerald-800">
+                              {request.exportNo}
+                            </span>
+                          ) : null}
+                        </div>
+                        <h2 className="mt-3 text-lg font-bold text-slate-950">
+                          {humanize(request.reportType)}
+                        </h2>
+                        <p className="mt-1 text-sm text-slate-600">
+                          {request.business?.name ||
+                            request.business?.legalName ||
+                            'Selected client'}
+                        </p>
+                      </div>
+                      <div className="text-sm text-slate-600 lg:text-right">
+                        <p>
+                          Requested by{' '}
+                          <span className="font-semibold text-slate-900">
+                            {personLabel(
+                              request.requestedBy,
+                              request.requestedByName,
+                            )}
+                          </span>
+                        </p>
+                        <p className="mt-1">
+                          {pakistanDateTime(
+                            request.requestedAt || request.createdAt,
+                          )}{' '}
+                          PKT
+                        </p>
+                      </div>
+                    </div>
+
+                    <dl className="mt-5 grid gap-3 rounded-xl bg-slate-50 p-4 sm:grid-cols-2 lg:grid-cols-4">
+                      <div>
+                        <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          Start date
+                        </dt>
+                        <dd className="mt-1 text-sm font-medium text-slate-900">
+                          {filters.startDate || filters.fromDate || 'Not specified'}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          End / as-of date
+                        </dt>
+                        <dd className="mt-1 text-sm font-medium text-slate-900">
+                          {filters.endDate ||
+                            filters.toDate ||
+                            filters.asOfDate ||
+                            'Not specified'}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          Format
+                        </dt>
+                        <dd className="mt-1 text-sm font-medium text-slate-900">
+                          {(request.format || 'XLSX').toUpperCase()}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          Decision / completion
+                        </dt>
+                        <dd className="mt-1 text-sm font-medium text-slate-900">
+                          {request.completedAt
+                            ? `${pakistanDateTime(request.completedAt)} PKT`
+                            : request.decidedAt
+                              ? `${pakistanDateTime(request.decidedAt)} PKT`
+                              : 'Pending'}
+                        </dd>
+                      </div>
+                    </dl>
+
+                    {request.decisionNote ? (
+                      <div className="mt-4 rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-700">
+                        <span className="font-semibold text-slate-900">
+                          Decision note:
+                        </span>{' '}
+                        {request.decisionNote}
+                        {request.decidedBy || request.decidedByName ? (
+                          <span className="text-slate-500">
+                            {' '}
+                            —{' '}
+                            {personLabel(
+                              request.decidedBy,
+                              request.decidedByName,
+                            )}
+                          </span>
+                        ) : null}
+                      </div>
+                    ) : null}
+
+                    {canDecide ? (
+                      <div className="mt-4 space-y-3">
+                        <label className="block">
+                          <span className="text-sm font-semibold text-slate-800">
+                            Decision note (optional)
+                          </span>
+                          <textarea
+                            value={notes[request.id] || ''}
+                            onChange={(event) =>
+                              setNotes((current) => ({
+                                ...current,
+                                [request.id]: event.target.value,
+                              }))
+                            }
+                            rows={2}
+                            placeholder="Add an approval or rejection note for the audit trail."
+                            className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none ring-blue-500 focus:ring-2"
+                          />
+                        </label>
+                        <div className="flex flex-wrap gap-3">
+                          <button
+                            type="button"
+                            onClick={() => decide(request, 'approved')}
+                            disabled={busy}
+                            className="rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+                          >
+                            {busy ? 'Working…' : `Approve ${requestNo}`}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => decide(request, 'rejected')}
+                            disabled={busy}
+                            className="rounded-xl bg-red-700 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+                          >
+                            {busy ? 'Working…' : `Reject ${requestNo}`}
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {canDownload ? (
+                      <div className="mt-4 flex flex-wrap items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => download(request)}
+                          disabled={busy || request.status === 'exporting'}
+                          className="rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+                        >
+                          {busy
+                            ? 'Preparing export…'
+                            : request.exportNo
+                              ? `Download ${request.exportNo}`
+                              : `Generate approved export for ${requestNo}`}
+                        </button>
+                        {request.completedFilename ? (
+                          <span className="break-all text-xs text-slate-500">
+                            {request.completedFilename}
+                          </span>
+                        ) : null}
                       </div>
                     ) : null}
                   </article>
@@ -656,7 +668,7 @@ export default function ReportsPage() {
             </section>
           ) : (
             <section className="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-14 text-center text-sm text-slate-500">
-              Generate a preview to view readable accounting references.
+              No report requests match the selected filters.
             </section>
           )}
         </main>
