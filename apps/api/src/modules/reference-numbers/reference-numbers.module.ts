@@ -27,6 +27,8 @@ import { ReferenceNumbersService } from './reference-numbers.service';
 
 import { ReferencePresentationService } from './reference-presentation.service';
 
+import { ReferenceResolutionService } from './reference-resolution.service';
+
 import { ReferenceWorkflowController } from './reference-workflow.controller';
 
 @Global()
@@ -46,6 +48,7 @@ import { ReferenceWorkflowController } from './reference-workflow.controller';
   providers: [
     ReferenceNumbersService,
     ReferencePresentationService,
+    ReferenceResolutionService,
     PaymentActivityService,
     ExpensePurchaseRegistersService,
 
@@ -61,6 +64,7 @@ import { ReferenceWorkflowController } from './reference-workflow.controller';
   exports: [
     ReferenceNumbersService,
     ReferencePresentationService,
+    ReferenceResolutionService,
     PaymentActivityService,
     ExpensePurchaseRegistersService,
   ],
