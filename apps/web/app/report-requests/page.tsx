@@ -1,7 +1,6 @@
 'use client';
 
 import Link from 'next/link';
-
 import {
   useEffect,
   useMemo,
@@ -9,11 +8,7 @@ import {
 } from 'react';
 
 import { AppShell } from '@/components/AppShell';
-
-import {
-  Card,
-  Input,
-} from '@/components/Card';
+import { Card } from '@/components/Card';
 
 import {
   api,
@@ -33,7 +28,6 @@ type Person = {
 
 type Business = {
   id: string;
-
   name: string;
 };
 
@@ -86,11 +80,17 @@ type ExportRequest = {
     | string
     | null;
 
-  requestNo?: string;
+  requestNo?:
+    | string
+    | null;
 
-  referenceNo?: string;
+  referenceNo?:
+    | string
+    | null;
 
-  reportRequestNo?: string;
+  reportRequestNo?:
+    | string
+    | null;
 
   exportNo?:
     | string
@@ -127,8 +127,11 @@ type DecisionResponse = {
 
   referenceNo?: string;
 
+  reportRequestNo?: string;
+
   request?:
-    ExportRequest;
+    | ExportRequest
+    | null;
 };
 
 type ExportResponse = {
@@ -162,7 +165,8 @@ function reportLabel(
   value: string,
 ) {
   return String(
-    value || 'report',
+    value ||
+      'report',
   )
     .replace(
       /[_-]+/g,
@@ -187,7 +191,9 @@ function formatDate(
   }
 
   const date =
-    new Date(value);
+    new Date(
+      value,
+    );
 
   if (
     Number.isNaN(
@@ -210,7 +216,9 @@ function formatDate(
       year: 'numeric',
     };
 
-  if (includeTime) {
+  if (
+    includeTime
+  ) {
     options.hour =
       '2-digit';
 
@@ -221,7 +229,9 @@ function formatDate(
   return new Intl.DateTimeFormat(
     'en-PK',
     options,
-  ).format(date);
+  ).format(
+    date,
+  );
 }
 
 function statusClasses(
@@ -263,12 +273,13 @@ function personLabel(
 }
 
 function requestReference(
-  request: ExportRequest,
+  request:
+    ExportRequest,
 ) {
   return (
     request.requestNo ||
-    request.referenceNo ||
     request.reportRequestNo ||
+    request.referenceNo ||
     'RPT reference pending'
   );
 }
@@ -310,7 +321,9 @@ export default function ReportRequestsPage() {
   ] =
     useState<
       'firm' | 'client'
-    >('client');
+    >(
+      'client',
+    );
 
   const [
     clientRole,
@@ -318,25 +331,33 @@ export default function ReportRequestsPage() {
   ] =
     useState<
       string | null
-    >(null);
+    >(
+      null,
+    );
 
   const [
     canExportDirectly,
     setCanExportDirectly,
   ] =
-    useState(false);
+    useState(
+      false,
+    );
 
   const [
     canRequestExport,
     setCanRequestExport,
   ] =
-    useState(false);
+    useState(
+      false,
+    );
 
   const [
     status,
     setStatus,
   ] =
-    useState('all');
+    useState(
+      'all',
+    );
 
   const [
     search,
@@ -365,7 +386,9 @@ export default function ReportRequestsPage() {
     loading,
     setLoading,
   ] =
-    useState(true);
+    useState(
+      true,
+    );
 
   const [
     message,
@@ -382,9 +405,18 @@ export default function ReportRequestsPage() {
   async function load() {
     setError('');
 
-    setLoading(true);
+    setLoading(
+      true,
+    );
 
     try {
+      /*
+       * Firm users first try the organization-wide queue.
+       *
+       * The global human-readable-reference interceptor decorates
+       * this endpoint too, so historical requests receive RPT
+       * references even if they pre-date Phase 4.
+       */
       try {
         const firmResponse =
           await api<
@@ -397,7 +429,9 @@ export default function ReportRequestsPage() {
             '/firm/report-export-requests',
           );
 
-        setMode('firm');
+        setMode(
+          'firm',
+        );
 
         setClientRole(
           null,
@@ -419,8 +453,10 @@ export default function ReportRequestsPage() {
 
         return;
       } catch {
-        // Client users cannot access
-        // the firm-wide queue.
+        /*
+         * Client users cannot access the firm-wide endpoint.
+         * Continue with the selected-client request history.
+         */
       }
 
       const businessId =
@@ -431,7 +467,9 @@ export default function ReportRequestsPage() {
           'client',
         );
 
-        setRequests([]);
+        setRequests(
+          [],
+        );
 
         setError(
           'Select a client company before viewing report export requests.',
@@ -468,8 +506,12 @@ export default function ReportRequestsPage() {
         result.requests ||
           [],
       );
-    } catch (loadError) {
-      setRequests([]);
+    } catch (
+      loadError
+    ) {
+      setRequests(
+        [],
+      );
 
       setError(
         loadError instanceof
@@ -484,108 +526,119 @@ export default function ReportRequestsPage() {
     }
   }
 
-  useEffect(() => {
-    const queryStatus =
-      new URLSearchParams(
-        window.location.search,
-      ).get(
-        'status',
-      );
+  useEffect(
+    () => {
+      const queryStatus =
+        new URLSearchParams(
+          window.location.search,
+        ).get(
+          'status',
+        );
 
-    if (
-      queryStatus &&
-      statusOptions.includes(
-        queryStatus,
-      )
-    ) {
-      setStatus(
-        queryStatus,
-      );
-    }
+      if (
+        queryStatus &&
+        statusOptions.includes(
+          queryStatus,
+        )
+      ) {
+        setStatus(
+          queryStatus,
+        );
+      }
 
-    void load();
+      void load();
 
-    window.addEventListener(
-      'pakbooks-business-changed',
-      load,
-    );
-
-    return () => {
-      window.removeEventListener(
+      window.addEventListener(
         'pakbooks-business-changed',
         load,
       );
-    };
-  }, []);
+
+      return () => {
+        window.removeEventListener(
+          'pakbooks-business-changed',
+          load,
+        );
+      };
+    },
+    [],
+  );
 
   const filteredRequests =
-    useMemo(() => {
-      const query =
-        search
-          .trim()
-          .toLowerCase();
+    useMemo(
+      () => {
+        const query =
+          search
+            .trim()
+            .toLowerCase();
 
-      return requests.filter(
-        (request) => {
-          if (
-            status !==
-              'all' &&
-            request.status !==
-              status
-          ) {
-            return false;
-          }
+        return requests.filter(
+          (
+            request,
+          ) => {
+            if (
+              status !==
+                'all' &&
+              request.status !==
+                status
+            ) {
+              return false;
+            }
 
-          if (!query) {
-            return true;
-          }
+            if (!query) {
+              return true;
+            }
 
-          return [
-            requestReference(
-              request,
-            ),
+            return [
+              requestReference(
+                request,
+              ),
 
-            request.exportNo,
+              request.exportNo,
 
-            request.reportType,
+              request.reportType,
 
-            request.status,
+              request.status,
 
-            request.business
-              ?.name,
+              request.business
+                ?.name,
 
-            request.requestedBy
-              ?.name,
+              request.requestedBy
+                ?.name,
 
-            request.requestedBy
-              ?.email,
+              request.requestedBy
+                ?.email,
 
-            request.requestedByName,
+              request.requestedByName,
 
-            request.decidedBy
-              ?.name,
+              request.decidedBy
+                ?.name,
 
-            request.decidedBy
-              ?.email,
+              request.decidedBy
+                ?.email,
 
-            request.decidedByName,
-          ].some(
-            (value) =>
-              String(
-                value || '',
-              )
-                .toLowerCase()
-                .includes(
-                  query,
-                ),
-          );
-        },
-      );
-    }, [
-      requests,
-      search,
-      status,
-    ]);
+              request.decidedByName,
+
+              request.reason,
+            ].some(
+              (value) =>
+                String(
+                  value ||
+                    '',
+                )
+                  .toLowerCase()
+                  .includes(
+                    query,
+                  ),
+            );
+          },
+        );
+      },
+      [
+        requests,
+        search,
+        status,
+      ],
+    );
 
   const pendingCount =
     requests.filter(
@@ -633,8 +686,13 @@ export default function ReportRequestsPage() {
         await api<DecisionResponse>(
           `/accounting/businesses/${request.businessId}/reporting/export-requests/${request.id}/decision`,
           {
-            method: 'POST',
+            method:
+              'POST',
 
+            /*
+             * IMPORTANT:
+             * Backend expects "decision", not "status".
+             */
             body:
               JSON.stringify(
                 {
@@ -652,18 +710,22 @@ export default function ReportRequestsPage() {
 
       const reference =
         result.requestNo ||
+        result.reportRequestNo ||
         result.referenceNo ||
         result.request
           ?.requestNo ||
-        result.request
-          ?.referenceNo ||
         requestReference(
           request,
         );
 
       setMessage(
         result.message ||
-          `${reference} ${decision}.`,
+          `${reference} ${
+            decision ===
+            'approved'
+              ? 'approved'
+              : 'rejected'
+          }.`,
       );
 
       setDecisionNotes(
@@ -676,7 +738,9 @@ export default function ReportRequestsPage() {
       );
 
       await load();
-    } catch (decisionError) {
+    } catch (
+      decisionError
+    ) {
       setError(
         decisionError instanceof
           Error
@@ -709,7 +773,8 @@ export default function ReportRequestsPage() {
         await api<ExportResponse>(
           `/accounting/businesses/${request.businessId}/xlsx/approved-request/${request.id}`,
           {
-            method: 'POST',
+            method:
+              'POST',
           },
         );
 
@@ -719,17 +784,31 @@ export default function ReportRequestsPage() {
         result.contentBase64,
       );
 
+      const requestNo =
+        result.requestNo ||
+        result.reportRequestNo ||
+        requestReference(
+          request,
+        );
+
+      const exportNo =
+        result.exportNo ||
+        result.referenceNo ||
+        '';
+
       setMessage(
         result.message ||
-          `${result.requestNo || requestReference(request)} completed as ${
-            result.exportNo ||
-            result.referenceNo ||
-            'an EX export'
-          }.`,
+          (
+            exportNo
+              ? `${requestNo} completed successfully as ${exportNo}.`
+              : `${requestNo} exported successfully.`
+          ),
       );
 
       await load();
-    } catch (downloadError) {
+    } catch (
+      downloadError
+    ) {
       setError(
         downloadError instanceof
           Error
@@ -758,8 +837,8 @@ export default function ReportRequestsPage() {
             <p className="mt-2 max-w-3xl text-sm text-slate-300">
               {mode ===
               'firm'
-                ? 'Review RPT-numbered requests, record an approval or rejection note, and keep completed EX references in the export trail.'
-                : 'Track each RPT request and the EX reference assigned when an approved XLSX is completed.'}
+                ? 'Review permanent RPT-numbered requests, approve or reject them, and follow completed requests into their EX export reference.'
+                : 'Track every report request by permanent RPT reference and see the EX reference after an approved export is completed.'}
             </p>
           </div>
 
@@ -767,21 +846,22 @@ export default function ReportRequestsPage() {
             href="/reports"
             className="rounded-2xl border border-white/20 bg-white/10 px-4 py-3 text-center text-sm font-semibold text-white hover:bg-white/15"
           >
-            Open Report Builder
+            Open Report
+            Builder
           </Link>
         </section>
 
-        {error && (
+        {error ? (
           <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {error}
           </div>
-        )}
+        ) : null}
 
-        {message && (
-          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+        {message ? (
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">
             {message}
           </div>
-        )}
+        ) : null}
 
         <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <Metric
@@ -790,9 +870,10 @@ export default function ReportRequestsPage() {
               requests.length
             }
             detail={
-              mode === 'firm'
-                ? 'Firm-wide export queue'
-                : 'Your client requests'
+              mode ===
+              'firm'
+                ? 'Firm-wide queue'
+                : 'Your requests'
             }
           />
 
@@ -821,27 +902,72 @@ export default function ReportRequestsPage() {
           />
         </section>
 
+        {mode ===
+          'client' &&
+        !loading ? (
+          <section className="grid gap-4 md:grid-cols-2">
+            <Card>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Direct export
+              </p>
+
+              <p className="mt-2 text-xl font-bold text-slate-900">
+                {canExportDirectly
+                  ? 'Enabled'
+                  : 'Approval required'}
+              </p>
+
+              <p className="mt-1 text-sm text-slate-500">
+                {canExportDirectly
+                  ? 'Your role can export reports directly from the Report Builder.'
+                  : 'Approved report requests are tracked by RPT number.'}
+              </p>
+            </Card>
+
+            <Card>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Current role
+              </p>
+
+              <p className="mt-2 text-xl font-bold text-slate-900">
+                {clientRole
+                  ? reportLabel(
+                      clientRole,
+                    )
+                  : 'Client user'}
+              </p>
+
+              <p className="mt-1 text-sm text-slate-500">
+                {canRequestExport
+                  ? 'You can send XLSX export requests to the firm.'
+                  : canExportDirectly
+                    ? 'An approval request is not required for this role.'
+                    : 'Report export requests are not enabled for this role.'}
+              </p>
+            </Card>
+          </section>
+        ) : null}
+
         <Card>
           <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
             <div>
-              <h2 className="text-lg font-bold text-slate-900">
+              <h2 className="text-xl font-bold text-slate-900">
                 {mode ===
                 'firm'
-                  ? 'Firm Approval Queue'
-                  : 'Client Request History'}
+                  ? 'Firm approval queue'
+                  : 'My export requests'}
               </h2>
 
               <p className="mt-1 text-sm text-slate-500">
-                {mode ===
-                'firm'
-                  ? 'Firm users can approve or reject pending report export requests.'
-                  : canExportDirectly
-                    ? 'Direct export is enabled for your role.'
-                    : canRequestExport
-                      ? 'Your role can request export approval.'
-                      : clientRole
-                        ? `Current client role: ${clientRole}`
-                        : 'Report export permissions are controlled by the firm.'}
+                {
+                  filteredRequests.length
+                }{' '}
+                request
+                {filteredRequests.length ===
+                1
+                  ? ''
+                  : 's'}{' '}
+                shown
               </p>
             </div>
 
@@ -862,7 +988,7 @@ export default function ReportRequestsPage() {
           </div>
 
           <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
-            <Input
+            <input
               value={
                 search
               }
@@ -870,11 +996,13 @@ export default function ReportRequestsPage() {
                 event,
               ) =>
                 setSearch(
-                  event.target
+                  event
+                    .target
                     .value,
                 )
               }
               placeholder="Search RPT, EX, report, client, requester…"
+              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-emerald-500"
             />
 
             <div className="flex flex-wrap gap-2">
@@ -909,7 +1037,7 @@ export default function ReportRequestsPage() {
 
         {loading ? (
           <Card>
-            <p className="text-sm text-slate-600">
+            <p className="py-8 text-center text-sm text-slate-500">
               Loading report
               requests…
             </p>
@@ -931,7 +1059,7 @@ export default function ReportRequestsPage() {
                       request.id
                     }
                   >
-                    <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
+                    <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-start">
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="rounded-lg bg-slate-900 px-2.5 py-1 font-mono text-xs font-bold text-white">
@@ -940,13 +1068,13 @@ export default function ReportRequestsPage() {
                             }
                           </span>
 
-                          {request.exportNo && (
+                          {request.exportNo ? (
                             <span className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 font-mono text-xs font-bold text-emerald-700">
                               {
                                 request.exportNo
                               }
                             </span>
-                          )}
+                          ) : null}
 
                           <span
                             className={`rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-wide ${statusClasses(
@@ -1001,43 +1129,48 @@ export default function ReportRequestsPage() {
                           />
                         </div>
 
-                        {request.reason && (
+                        {request.reason ? (
                           <p className="mt-4 rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
                             <span className="font-semibold text-slate-800">
                               Reason:
                             </span>{' '}
+
                             {
                               request.reason
                             }
                           </p>
-                        )}
+                        ) : null}
 
-                        {request.decisionNote && (
+                        {request.decisionNote ? (
                           <p className="mt-3 rounded-2xl border border-slate-200 px-4 py-3 text-sm text-slate-600">
                             <span className="font-semibold text-slate-800">
                               Decision
                               note:
                             </span>{' '}
+
                             {
                               request.decisionNote
                             }
                           </p>
-                        )}
+                        ) : null}
 
-                        {(request.decidedBy ||
-                          request.decidedByName) && (
+                        {request.decidedBy ||
+                        request.decidedByName ? (
                           <p className="mt-2 text-xs text-slate-400">
-                            Decided by{' '}
+                            Decided
+                            by{' '}
+
                             {personLabel(
                               request.decidedBy,
                               request.decidedByName,
                             )}
                           </p>
-                        )}
+                        ) : null}
 
-                        {request.completedAt && (
+                        {request.completedAt ? (
                           <p className="mt-2 text-xs text-slate-400">
                             Completed{' '}
+
                             {formatDate(
                               request.completedAt,
                               true,
@@ -1047,152 +1180,162 @@ export default function ReportRequestsPage() {
                               ? ` • ${request.completedFilename}`
                               : ''}
                           </p>
-                        )}
+                        ) : null}
                       </div>
 
                       <div className="w-full space-y-3 lg:w-80">
                         {mode ===
                           'firm' &&
-                          request.status ===
-                            'pending' && (
-                            <>
-                              <textarea
-                                value={
-                                  decisionNotes[
-                                    request.id
-                                  ] ||
-                                  ''
-                                }
-                                onChange={(
-                                  event,
-                                ) =>
-                                  setDecisionNotes(
-                                    (
-                                      current,
-                                    ) => ({
-                                      ...current,
+                        request.status ===
+                          'pending' ? (
+                          <>
+                            <textarea
+                              value={
+                                decisionNotes[
+                                  request.id
+                                ] ||
+                                ''
+                              }
+                              onChange={(
+                                event,
+                              ) =>
+                                setDecisionNotes(
+                                  (
+                                    current,
+                                  ) => ({
+                                    ...current,
 
-                                      [request.id]:
-                                        event
-                                          .target
-                                          .value,
-                                    }),
+                                    [request.id]:
+                                      event
+                                        .target
+                                        .value,
+                                  }),
+                                )
+                              }
+                              placeholder={`Optional decision note for ${reference}`}
+                              rows={
+                                3
+                              }
+                              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-emerald-500"
+                            />
+
+                            <div className="grid grid-cols-2 gap-2">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void decide(
+                                    request,
+                                    'approved',
                                   )
                                 }
-                                placeholder="Optional decision note"
-                                rows={
-                                  3
-                                }
-                                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-emerald-500"
-                              />
-
-                              <div className="grid grid-cols-2 gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    decide(
-                                      request,
-                                      'approved',
-                                    )
-                                  }
-                                  disabled={
-                                    busyId ===
-                                    request.id
-                                  }
-                                  className="rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-                                >
-                                  {busyId ===
+                                disabled={
+                                  busyId ===
                                   request.id
-                                    ? 'Saving…'
-                                    : 'Approve'}
-                                </button>
+                                }
+                                className="rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {busyId ===
+                                request.id
+                                  ? 'Saving…'
+                                  : 'Approve'}
+                              </button>
 
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    decide(
-                                      request,
-                                      'rejected',
-                                    )
-                                  }
-                                  disabled={
-                                    busyId ===
-                                    request.id
-                                  }
-                                  className="rounded-2xl border border-red-200 px-4 py-3 text-sm font-bold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-                                >
-                                  Reject
-                                </button>
-                              </div>
-                            </>
-                          )}
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void decide(
+                                    request,
+                                    'rejected',
+                                  )
+                                }
+                                disabled={
+                                  busyId ===
+                                  request.id
+                                }
+                                className="rounded-2xl border border-red-200 px-4 py-3 text-sm font-bold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                Reject
+                              </button>
+                            </div>
+                          </>
+                        ) : null}
 
                         {mode ===
                           'client' &&
-                          request.status ===
-                            'approved' && (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                downloadApproved(
-                                  request,
-                                )
-                              }
-                              disabled={
-                                busyId ===
-                                request.id
-                              }
-                              className="w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                              {busyId ===
+                        request.status ===
+                          'approved' ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void downloadApproved(
+                                request,
+                              )
+                            }
+                            disabled={
+                              busyId ===
                               request.id
-                                ? 'Preparing XLSX…'
-                                : `Download approved ${reference}`}
-                            </button>
-                          )}
+                            }
+                            className="w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {busyId ===
+                            request.id
+                              ? 'Preparing XLSX…'
+                              : `Download approved ${reference}`}
+                          </button>
+                        ) : null}
 
                         {mode ===
                           'firm' &&
-                          request.status ===
-                            'approved' && (
-                            <p className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-700">
-                              {
-                                reference
-                              }{' '}
-                              is approved.
-                              Waiting for
-                              the requesting
-                              client to use
-                              the one-time
-                              XLSX approval.
-                            </p>
-                          )}
-
-                        {request.status ===
-                          'exporting' && (
-                          <p className="rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm font-semibold text-violet-700">
-                            XLSX
-                            generation is
-                            currently in
-                            progress.
+                        request.status ===
+                          'approved' ? (
+                          <p className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-700">
+                            {
+                              reference
+                            }{' '}
+                            is approved
+                            and waiting
+                            for the
+                            one-time XLSX
+                            export.
                           </p>
-                        )}
+                        ) : null}
 
                         {request.status ===
-                          'exported' && (
+                          'exporting' ? (
+                          <p className="rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm font-semibold text-violet-700">
+                            {
+                              reference
+                            }{' '}
+                            is currently
+                            being
+                            exported.
+                          </p>
+                        ) : null}
+
+                        {request.status ===
+                          'exported' ? (
                           <p className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">
-                            Export
+                            {
+                              reference
+                            }{' '}
                             completed
 
                             {request.exportNo
                               ? ` as ${request.exportNo}`
                               : ''}
-                            . The
-                            one-time
-                            approval has
-                            been consumed.
+                            .
                           </p>
-                        )}
+                        ) : null}
+
+                        {request.status ===
+                          'rejected' ? (
+                          <p className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+                            {
+                              reference
+                            }{' '}
+                            was rejected.
+                          </p>
+                        ) : null}
                       </div>
                     </div>
                   </Card>
@@ -1212,8 +1355,8 @@ export default function ReportRequestsPage() {
                 Create a request
                 from the Report
                 Builder or adjust
-                the status/search
-                filter.
+                the current
+                filters.
               </p>
             </div>
           </Card>
