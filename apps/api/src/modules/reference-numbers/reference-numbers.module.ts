@@ -33,6 +33,10 @@ import { ReferenceResolutionService } from './reference-resolution.service';
 
 import { ReferenceWorkflowController } from './reference-workflow.controller';
 
+import { ReportExportHistoryController } from './report-export-history.controller';
+
+import { ReportExportHistoryService } from './report-export-history.service';
+
 @Global()
 @Module({
   imports: [
@@ -45,6 +49,7 @@ import { ReferenceWorkflowController } from './reference-workflow.controller';
     ReferenceNumbersController,
     ReferenceWorkflowController,
     ExpensePurchaseRegistersController,
+    ReportExportHistoryController,
   ],
 
   providers: [
@@ -54,10 +59,14 @@ import { ReferenceWorkflowController } from './reference-workflow.controller';
     PaymentActivityService,
     ExpensePurchaseRegistersService,
     ExpensePurchaseReferenceService,
+    ReportExportHistoryService,
 
     {
-      provide: APP_INTERCEPTOR,
-      useClass: HumanReadableReferenceInterceptor,
+      provide:
+        APP_INTERCEPTOR,
+
+      useClass:
+        HumanReadableReferenceInterceptor,
     },
   ],
 
@@ -68,6 +77,7 @@ import { ReferenceWorkflowController } from './reference-workflow.controller';
     PaymentActivityService,
     ExpensePurchaseRegistersService,
     ExpensePurchaseReferenceService,
+    ReportExportHistoryService,
   ],
 })
 export class ReferenceNumbersModule {}
