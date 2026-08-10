@@ -1,21 +1,35 @@
 import { Module } from '@nestjs/common';
+
 import { AuthModule } from '../auth/auth.module';
-import { BusinessesModule } from '../businesses/businesses.module';
-import { PeriodsModule } from '../periods/periods.module';
-import { ReferenceNumbersModule } from '../reference-numbers/reference-numbers.module';
+
 import { PrismaModule } from '../../prisma/prisma.module';
 
+import { BusinessesModule } from '../businesses/businesses.module';
+
+import { PeriodsModule } from '../periods/periods.module';
+
+import { ReferenceNumbersModule } from '../reference-numbers/reference-numbers.module';
+
 import { AccountingController } from './accounting.controller';
+
 import { AccountingViewsController } from './accounting-views.controller';
+
 import { AccountingReportingController } from './accounting-reporting.controller';
+
 import { FinancialStatementsController } from './financial-statements.controller';
+
 import { XlsxExportController } from './xlsx-export.controller';
 
 import { AccountingService } from './accounting.service';
+
 import { AccountingViewsService } from './accounting-views.service';
+
 import { AccountingReportingService } from './accounting-reporting.service';
+
 import { FinancialStatementsService } from './financial-statements.service';
+
 import { XlsxExportService } from './xlsx-export.service';
+
 import { ReportApprovalService } from './report-approval.service';
 
 @Module({
@@ -26,6 +40,7 @@ import { ReportApprovalService } from './report-approval.service';
     PeriodsModule,
     ReferenceNumbersModule,
   ],
+
   controllers: [
     AccountingController,
     AccountingViewsController,
@@ -33,6 +48,7 @@ import { ReportApprovalService } from './report-approval.service';
     FinancialStatementsController,
     XlsxExportController,
   ],
+
   providers: [
     AccountingService,
     AccountingViewsService,
@@ -41,6 +57,12 @@ import { ReportApprovalService } from './report-approval.service';
     XlsxExportService,
     ReportApprovalService,
   ],
-  exports: [AccountingService],
+
+  exports: [
+    AccountingService,
+    AccountingReportingService,
+    XlsxExportService,
+    ReportApprovalService,
+  ],
 })
 export class AccountingModule {}
