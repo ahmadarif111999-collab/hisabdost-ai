@@ -2,26 +2,140 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+
   pull_request:
-    branches: [main]
+    branches:
+      - main
 
 jobs:
   build:
+    name: Build and startup verification
+
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+
+        env:
+          POSTGRES_USER: pakbooks
+          POSTGRES_PASSWORD: pakbooks
+          POSTGRES_DB: pakbooks
+
+        ports:
+          - 5432:5432
+
+        options: >-
+          --health-cmd "pg_isready -U pakbooks -d pakbooks"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     env:
       DATABASE_URL: postgresql://pakbooks:pakbooks@localhost:5432/pakbooks?schema=public
       JWT_SECRET: ci-only-secret
       NEXT_PUBLIC_API_URL: http://localhost:4000
+      FRONTEND_URL: http://localhost:3000
+      PORT: 4000
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
         with:
           version: 9.12.3
-      - uses: actions/setup-node@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --no-frozen-lockfile
-      - run: pnpm db:generate
-      - run: pnpm build
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check repository paths
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          suspicious_paths="$(
+            git ls-files |
+              grep -E '(^|/)[^/]*[[:space:]]/|[[:space:]]$' ||
+              true
+          )"
+
+          if [ -n "$suspicious_paths" ]; then
+            echo "Found repository paths containing trailing spaces:"
+            echo "$suspicious_paths"
+            exit 1
+          fi
+
+          echo "Repository path check passed."
+
+      - name: Generate Prisma Client
+        run: pnpm db:generate
+
+      - name: Build shared package
+        run: pnpm --filter @pakbooks/shared build
+
+      - name: Build backend
+        run: pnpm --filter @pakbooks/api build
+
+      - name: Build frontend
+        run: pnpm --filter @pakbooks/web build
+
+      - name: Verify backend startup and health
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          LOG_FILE="/tmp/hisabdost-api.log"
+
+          pnpm --filter @pakbooks/api start >"$LOG_FILE" 2>&1 &
+          API_PID=$!
+
+          cleanup() {
+            if kill -0 "$API_PID" 2>/dev/null; then
+              kill "$API_PID" || true
+              wait "$API_PID" || true
+            fi
+          }
+
+          trap cleanup EXIT
+
+          for attempt in $(seq 1 20); do
+            if ! kill -0 "$API_PID" 2>/dev/null; then
+              echo "Backend process exited before becoming healthy."
+              echo
+              cat "$LOG_FILE"
+              exit 1
+            fi
+
+            if curl --fail --silent --show-error \
+              http://127.0.0.1:4000/health \
+              >/tmp/hisabdost-health.json; then
+
+              echo "Backend health check passed:"
+              cat /tmp/hisabdost-health.json
+              echo
+
+              cleanup
+              trap - EXIT
+              exit 0
+            fi
+
+            echo "Waiting for API startup... attempt ${attempt}/20"
+            sleep 1
+          done
+
+          echo "Backend did not become healthy within the startup window."
+          echo
+          cat "$LOG_FILE"
+          exit 1
