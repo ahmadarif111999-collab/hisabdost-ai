@@ -1,13 +1,20 @@
 'use client';
 
 import Link from 'next/link';
+
 import {
   useEffect,
   useMemo,
   useState,
 } from 'react';
+
 import { AppShell } from '@/components/AppShell';
-import { Card } from '@/components/Card';
+
+import {
+  Card,
+  Input,
+} from '@/components/Card';
+
 import {
   api,
   downloadBase64File,
@@ -15,44 +22,130 @@ import {
 } from '@/lib/api';
 
 type Person = {
-  name?: string | null;
-  email?: string | null;
+  name?:
+    | string
+    | null;
+
+  email?:
+    | string
+    | null;
 };
 
 type Business = {
   id: string;
+
   name: string;
 };
 
 type ExportRequest = {
   id: string;
+
   businessId: string;
+
   reportType: string;
+
   format: string;
+
   status: string;
-  reason?: string | null;
-  decisionNote?: string | null;
-  dateFrom?: string | null;
-  dateTo?: string | null;
+
+  reason?:
+    | string
+    | null;
+
+  decisionNote?:
+    | string
+    | null;
+
+  dateFrom?:
+    | string
+    | null;
+
+  dateTo?:
+    | string
+    | null;
+
   createdAt: string;
+
   updatedAt: string;
+
   business?: Business;
-  requestedBy?: Person | null;
-  decidedBy?: Person | null;
+
+  requestedBy?:
+    | Person
+    | null;
+
+  decidedBy?:
+    | Person
+    | null;
+
+  requestedByName?:
+    | string
+    | null;
+
+  decidedByName?:
+    | string
+    | null;
+
+  requestNo?: string;
+
+  referenceNo?: string;
+
+  reportRequestNo?: string;
+
+  exportNo?:
+    | string
+    | null;
+
+  completedFilename?:
+    | string
+    | null;
+
+  completedAt?:
+    | string
+    | null;
 };
 
 type RequestListResponse = {
   isFirmUser: boolean;
-  clientRole?: string | null;
+
+  clientRole?:
+    | string
+    | null;
+
   canExportDirectly: boolean;
+
   canRequestExport: boolean;
-  requests: ExportRequest[];
+
+  requests:
+    ExportRequest[];
+};
+
+type DecisionResponse = {
+  message?: string;
+
+  requestNo?: string;
+
+  referenceNo?: string;
+
+  request?:
+    ExportRequest;
 };
 
 type ExportResponse = {
+  requestNo?: string;
+
+  reportRequestNo?: string;
+
+  exportNo?: string;
+
+  referenceNo?: string;
+
   filename: string;
+
   mimeType: string;
+
   contentBase64: string;
+
   message?: string;
 };
 
@@ -65,9 +158,16 @@ const statusOptions = [
   'exported',
 ];
 
-function reportLabel(value: string) {
-  return String(value || 'report')
-    .replace(/[_-]+/g, ' ')
+function reportLabel(
+  value: string,
+) {
+  return String(
+    value || 'report',
+  )
+    .replace(
+      /[_-]+/g,
+      ' ',
+    )
     .replace(
       /\b\w/g,
       (letter) =>
@@ -76,32 +176,46 @@ function reportLabel(value: string) {
 }
 
 function formatDate(
-  value?: string | null,
+  value?:
+    | string
+    | null,
+
   includeTime = false,
 ) {
   if (!value) {
     return '-';
   }
 
-  const date = new Date(value);
+  const date =
+    new Date(value);
 
   if (
-    Number.isNaN(date.getTime())
+    Number.isNaN(
+      date.getTime(),
+    )
   ) {
     return '-';
   }
 
   const options:
-    Intl.DateTimeFormatOptions = {
-      timeZone: 'Asia/Karachi',
+    Intl.DateTimeFormatOptions =
+    {
+      timeZone:
+        'Asia/Karachi',
+
       day: '2-digit',
+
       month: 'short',
+
       year: 'numeric',
     };
 
   if (includeTime) {
-    options.hour = '2-digit';
-    options.minute = '2-digit';
+    options.hour =
+      '2-digit';
+
+    options.minute =
+      '2-digit';
   }
 
   return new Intl.DateTimeFormat(
@@ -131,91 +245,176 @@ function statusClasses(
   }
 }
 
+function personLabel(
+  person?:
+    | Person
+    | null,
+
+  fallback?:
+    | string
+    | null,
+) {
+  return (
+    person?.name ||
+    person?.email ||
+    fallback ||
+    'Unknown user'
+  );
+}
+
+function requestReference(
+  request: ExportRequest,
+) {
+  return (
+    request.requestNo ||
+    request.referenceNo ||
+    request.reportRequestNo ||
+    'RPT reference pending'
+  );
+}
+
+function normalizeFirmResponse(
+  value:
+    | ExportRequest[]
+    | {
+        requests?:
+          ExportRequest[];
+      },
+) {
+  if (
+    Array.isArray(
+      value,
+    )
+  ) {
+    return value;
+  }
+
+  return (
+    value?.requests ||
+    []
+  );
+}
+
 export default function ReportRequestsPage() {
   const [
     requests,
     setRequests,
-  ] = useState<ExportRequest[]>([]);
+  ] =
+    useState<
+      ExportRequest[]
+    >([]);
 
   const [
     mode,
     setMode,
-  ] = useState<
-    'firm' | 'client'
-  >('client');
+  ] =
+    useState<
+      'firm' | 'client'
+    >('client');
 
   const [
     clientRole,
     setClientRole,
-  ] = useState<string | null>(
-    null,
-  );
+  ] =
+    useState<
+      string | null
+    >(null);
 
   const [
     canExportDirectly,
     setCanExportDirectly,
-  ] = useState(false);
+  ] =
+    useState(false);
 
   const [
     canRequestExport,
     setCanRequestExport,
-  ] = useState(false);
+  ] =
+    useState(false);
 
   const [
     status,
     setStatus,
-  ] = useState('all');
+  ] =
+    useState('all');
+
+  const [
+    search,
+    setSearch,
+  ] =
+    useState('');
 
   const [
     decisionNotes,
     setDecisionNotes,
-  ] = useState<
-    Record<string, string>
-  >({});
+  ] =
+    useState<
+      Record<
+        string,
+        string
+      >
+    >({});
 
   const [
     busyId,
     setBusyId,
-  ] = useState('');
+  ] =
+    useState('');
 
   const [
     loading,
     setLoading,
-  ] = useState(true);
+  ] =
+    useState(true);
 
   const [
     message,
     setMessage,
-  ] = useState('');
+  ] =
+    useState('');
 
   const [
     error,
     setError,
-  ] = useState('');
+  ] =
+    useState('');
 
   async function load() {
     setError('');
+
     setLoading(true);
 
     try {
       try {
-        const firmRequests =
+        const firmResponse =
           await api<
-            ExportRequest[]
+            | ExportRequest[]
+            | {
+                requests?:
+                  ExportRequest[];
+              }
           >(
             '/firm/report-export-requests',
           );
 
         setMode('firm');
-        setClientRole(null);
+
+        setClientRole(
+          null,
+        );
+
         setCanExportDirectly(
           true,
         );
+
         setCanRequestExport(
           false,
         );
+
         setRequests(
-          firmRequests,
+          normalizeFirmResponse(
+            firmResponse,
+          ),
         );
 
         return;
@@ -228,7 +427,10 @@ export default function ReportRequestsPage() {
         getBusinessId();
 
       if (!businessId) {
-        setMode('client');
+        setMode(
+          'client',
+        );
+
         setRequests([]);
 
         setError(
@@ -250,7 +452,8 @@ export default function ReportRequestsPage() {
       );
 
       setClientRole(
-        result.clientRole || null,
+        result.clientRole ||
+          null,
       );
 
       setCanExportDirectly(
@@ -262,18 +465,22 @@ export default function ReportRequestsPage() {
       );
 
       setRequests(
-        result.requests,
+        result.requests ||
+          [],
       );
     } catch (loadError) {
       setRequests([]);
 
       setError(
-        loadError instanceof Error
+        loadError instanceof
+          Error
           ? loadError.message
           : 'Could not load report export requests',
       );
     } finally {
-      setLoading(false);
+      setLoading(
+        false,
+      );
     }
   }
 
@@ -281,7 +488,9 @@ export default function ReportRequestsPage() {
     const queryStatus =
       new URLSearchParams(
         window.location.search,
-      ).get('status');
+      ).get(
+        'status',
+      );
 
     if (
       queryStatus &&
@@ -289,10 +498,12 @@ export default function ReportRequestsPage() {
         queryStatus,
       )
     ) {
-      setStatus(queryStatus);
+      setStatus(
+        queryStatus,
+      );
     }
 
-    load();
+    void load();
 
     window.addEventListener(
       'pakbooks-business-changed',
@@ -309,15 +520,72 @@ export default function ReportRequestsPage() {
 
   const filteredRequests =
     useMemo(() => {
-      if (status === 'all') {
-        return requests;
-      }
+      const query =
+        search
+          .trim()
+          .toLowerCase();
 
       return requests.filter(
-        (request) =>
-          request.status === status,
+        (request) => {
+          if (
+            status !==
+              'all' &&
+            request.status !==
+              status
+          ) {
+            return false;
+          }
+
+          if (!query) {
+            return true;
+          }
+
+          return [
+            requestReference(
+              request,
+            ),
+
+            request.exportNo,
+
+            request.reportType,
+
+            request.status,
+
+            request.business
+              ?.name,
+
+            request.requestedBy
+              ?.name,
+
+            request.requestedBy
+              ?.email,
+
+            request.requestedByName,
+
+            request.decidedBy
+              ?.name,
+
+            request.decidedBy
+              ?.email,
+
+            request.decidedByName,
+          ].some(
+            (value) =>
+              String(
+                value || '',
+              )
+                .toLowerCase()
+                .includes(
+                  query,
+                ),
+          );
+        },
       );
-    }, [requests, status]);
+    }, [
+      requests,
+      search,
+      status,
+    ]);
 
   const pendingCount =
     requests.filter(
@@ -341,8 +609,10 @@ export default function ReportRequestsPage() {
     ).length;
 
   async function decide(
-    request: ExportRequest,
-    nextStatus:
+    request:
+      ExportRequest,
+
+    decision:
       | 'approved'
       | 'rejected',
   ) {
@@ -350,37 +620,58 @@ export default function ReportRequestsPage() {
       return;
     }
 
-    setBusyId(request.id);
+    setBusyId(
+      request.id,
+    );
+
     setError('');
+
     setMessage('');
 
     try {
       const result =
-        await api<{
-          message: string;
-        }>(
+        await api<DecisionResponse>(
           `/accounting/businesses/${request.businessId}/reporting/export-requests/${request.id}/decision`,
           {
             method: 'POST',
-            body: JSON.stringify({
-              status: nextStatus,
-              decisionNote:
-                decisionNotes[
-                  request.id
-                ] || undefined,
-            }),
+
+            body:
+              JSON.stringify(
+                {
+                  decision,
+
+                  decisionNote:
+                    decisionNotes[
+                      request.id
+                    ] ||
+                    undefined,
+                },
+              ),
           },
+        );
+
+      const reference =
+        result.requestNo ||
+        result.referenceNo ||
+        result.request
+          ?.requestNo ||
+        result.request
+          ?.referenceNo ||
+        requestReference(
+          request,
         );
 
       setMessage(
         result.message ||
-          `Report request ${nextStatus}.`,
+          `${reference} ${decision}.`,
       );
 
       setDecisionNotes(
         (current) => ({
           ...current,
-          [request.id]: '',
+
+          [request.id]:
+            '',
         }),
       );
 
@@ -390,7 +681,7 @@ export default function ReportRequestsPage() {
         decisionError instanceof
           Error
           ? decisionError.message
-          : `Could not ${nextStatus} request`,
+          : `Could not ${decision} request`,
       );
     } finally {
       setBusyId('');
@@ -398,14 +689,19 @@ export default function ReportRequestsPage() {
   }
 
   async function downloadApproved(
-    request: ExportRequest,
+    request:
+      ExportRequest,
   ) {
     if (busyId) {
       return;
     }
 
-    setBusyId(request.id);
+    setBusyId(
+      request.id,
+    );
+
     setError('');
+
     setMessage('');
 
     try {
@@ -425,7 +721,11 @@ export default function ReportRequestsPage() {
 
       setMessage(
         result.message ||
-          'Approved report exported.',
+          `${result.requestNo || requestReference(request)} completed as ${
+            result.exportNo ||
+            result.referenceNo ||
+            'an EX export'
+          }.`,
       );
 
       await load();
@@ -444,7 +744,7 @@ export default function ReportRequestsPage() {
   return (
     <AppShell>
       <div className="mx-auto max-w-7xl space-y-6 px-4 py-8">
-        <div className="flex flex-col justify-between gap-4 rounded-3xl bg-slate-950 p-6 text-white shadow-sm md:flex-row md:items-center">
+        <section className="flex flex-col justify-between gap-4 rounded-3xl bg-slate-950 p-6 text-white shadow-sm md:flex-row md:items-center">
           <div>
             <p className="text-sm font-semibold uppercase tracking-wide text-emerald-300">
               Report controls
@@ -456,9 +756,10 @@ export default function ReportRequestsPage() {
             </h1>
 
             <p className="mt-2 max-w-3xl text-sm text-slate-300">
-              {mode === 'firm'
-                ? 'Review client requests, record an approval or rejection note, and maintain a complete export trail.'
-                : 'Track your export approval status and download each approved XLSX report once.'}
+              {mode ===
+              'firm'
+                ? 'Review RPT-numbered requests, record an approval or rejection note, and keep completed EX references in the export trail.'
+                : 'Track each RPT request and the EX reference assigned when an approved XLSX is completed.'}
             </p>
           </div>
 
@@ -468,7 +769,7 @@ export default function ReportRequestsPage() {
           >
             Open Report Builder
           </Link>
-        </div>
+        </section>
 
         {error && (
           <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -482,98 +783,109 @@ export default function ReportRequestsPage() {
           </div>
         )}
 
-        <div className="grid gap-4 md:grid-cols-3">
+        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Metric
+            label="All Requests"
+            value={
+              requests.length
+            }
+            detail={
+              mode === 'firm'
+                ? 'Firm-wide export queue'
+                : 'Your client requests'
+            }
+          />
+
           <Metric
             label="Pending"
-            value={pendingCount}
-            detail="Waiting for firm decision"
+            value={
+              pendingCount
+            }
+            detail="Waiting for decision"
           />
 
           <Metric
             label="Approved"
-            value={approvedCount}
-            detail="Ready for one-time download"
+            value={
+              approvedCount
+            }
+            detail="Ready for one-time export"
           />
 
           <Metric
             label="Exported"
-            value={exportedCount}
-            detail="Approval already consumed"
+            value={
+              exportedCount
+            }
+            detail="Completed with EX reference"
           />
-        </div>
-
-        {mode === 'client' &&
-          !loading && (
-            <div className="grid gap-4 md:grid-cols-2">
-              <Card>
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Direct export
-                </p>
-
-                <p className="mt-2 text-xl font-bold text-slate-900">
-                  {canExportDirectly
-                    ? 'Enabled'
-                    : 'Approval required'}
-                </p>
-
-                <p className="mt-1 text-sm text-slate-500">
-                  {canExportDirectly
-                    ? 'Your client role can export reports directly from the Report Builder.'
-                    : 'Use Request Export Approval from the Report Builder.'}
-                </p>
-              </Card>
-
-              <Card>
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Current role
-                </p>
-
-                <p className="mt-2 text-xl font-bold text-slate-900">
-                  {clientRole
-                    ? reportLabel(
-                        clientRole,
-                      )
-                    : 'Client user'}
-                </p>
-
-                <p className="mt-1 text-sm text-slate-500">
-                  {canRequestExport
-                    ? 'You can send an XLSX export request to the firm.'
-                    : canExportDirectly
-                      ? 'An approval request is not required for this role.'
-                      : 'Report export requests are not enabled for this role.'}
-                </p>
-              </Card>
-            </div>
-          )}
+        </section>
 
         <Card>
-          <div className="flex flex-col justify-between gap-3 md:flex-row md:items-center">
+          <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
             <div>
-              <h2 className="text-xl font-bold text-slate-900">
-                {mode === 'firm'
-                  ? 'Firm approval queue'
-                  : 'My export requests'}
+              <h2 className="text-lg font-bold text-slate-900">
+                {mode ===
+                'firm'
+                  ? 'Firm Approval Queue'
+                  : 'Client Request History'}
               </h2>
 
               <p className="mt-1 text-sm text-slate-500">
-                {
-                  filteredRequests.length
-                }{' '}
-                request
-                {filteredRequests.length ===
-                1
-                  ? ''
-                  : 's'}{' '}
-                shown
+                {mode ===
+                'firm'
+                  ? 'Firm users can approve or reject pending report export requests.'
+                  : canExportDirectly
+                    ? 'Direct export is enabled for your role.'
+                    : canRequestExport
+                      ? 'Your role can request export approval.'
+                      : clientRole
+                        ? `Current client role: ${clientRole}`
+                        : 'Report export permissions are controlled by the firm.'}
               </p>
             </div>
 
+            <button
+              type="button"
+              onClick={() =>
+                void load()
+              }
+              disabled={
+                loading
+              }
+              className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            >
+              {loading
+                ? 'Refreshing…'
+                : 'Refresh'}
+            </button>
+          </div>
+
+          <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+            <Input
+              value={
+                search
+              }
+              onChange={(
+                event,
+              ) =>
+                setSearch(
+                  event.target
+                    .value,
+                )
+              }
+              placeholder="Search RPT, EX, report, client, requester…"
+            />
+
             <div className="flex flex-wrap gap-2">
               {statusOptions.map(
-                (option) => (
+                (
+                  option,
+                ) => (
                   <button
-                    key={option}
+                    key={
+                      option
+                    }
                     type="button"
                     onClick={() =>
                       setStatus(
@@ -599,248 +911,293 @@ export default function ReportRequestsPage() {
           <Card>
             <p className="text-sm text-slate-600">
               Loading report
-              requests...
+              requests…
             </p>
           </Card>
         ) : filteredRequests.length ? (
           <div className="space-y-4">
             {filteredRequests.map(
-              (request) => (
-                <Card
-                  key={request.id}
-                >
-                  <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="text-lg font-bold text-slate-900">
+              (
+                request,
+              ) => {
+                const reference =
+                  requestReference(
+                    request,
+                  );
+
+                return (
+                  <Card
+                    key={
+                      request.id
+                    }
+                  >
+                    <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="rounded-lg bg-slate-900 px-2.5 py-1 font-mono text-xs font-bold text-white">
+                            {
+                              reference
+                            }
+                          </span>
+
+                          {request.exportNo && (
+                            <span className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 font-mono text-xs font-bold text-emerald-700">
+                              {
+                                request.exportNo
+                              }
+                            </span>
+                          )}
+
+                          <span
+                            className={`rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-wide ${statusClasses(
+                              request.status,
+                            )}`}
+                          >
+                            {
+                              request.status
+                            }
+                          </span>
+                        </div>
+
+                        <h3 className="mt-3 text-lg font-bold text-slate-900">
                           {reportLabel(
                             request.reportType,
                           )}
                         </h3>
 
-                        <span
-                          className={`rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-wide ${statusClasses(
-                            request.status,
-                          )}`}
-                        >
-                          {
-                            request.status
-                          }
-                        </span>
-                      </div>
-
-                      <div className="mt-3 grid gap-3 text-sm text-slate-600 md:grid-cols-2 xl:grid-cols-4">
-                        <Info
-                          label="Client"
-                          value={
-                            request
-                              .business
-                              ?.name ||
-                            'Selected client'
-                          }
-                        />
-
-                        <Info
-                          label="Requested by"
-                          value={
-                            request
-                              .requestedBy
-                              ?.name ||
-                            request
-                              .requestedBy
-                              ?.email ||
-                            'Client user'
-                          }
-                        />
-
-                        <Info
-                          label="Period"
-                          value={`${formatDate(
-                            request.dateFrom,
-                          )} to ${formatDate(
-                            request.dateTo,
-                          )}`}
-                        />
-
-                        <Info
-                          label="Requested"
-                          value={formatDate(
-                            request.createdAt,
-                            true,
-                          )}
-                        />
-                      </div>
-
-                      {request.reason && (
-                        <p className="mt-4 rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                          <span className="font-semibold text-slate-800">
-                            Reason:
-                          </span>{' '}
-                          {
-                            request.reason
-                          }
-                        </p>
-                      )}
-
-                      {request.decisionNote && (
-                        <p className="mt-3 rounded-2xl border border-slate-200 px-4 py-3 text-sm text-slate-600">
-                          <span className="font-semibold text-slate-800">
-                            Decision
-                            note:
-                          </span>{' '}
-                          {
-                            request.decisionNote
-                          }
-                        </p>
-                      )}
-
-                      {request.decidedBy && (
-                        <p className="mt-2 text-xs text-slate-400">
-                          Decided by{' '}
-                          {request
-                            .decidedBy
-                            .name ||
-                            request
-                              .decidedBy
-                              .email ||
-                            'Firm user'}
-                        </p>
-                      )}
-                    </div>
-
-                    <div className="w-full space-y-3 lg:w-80">
-                      {mode ===
-                        'firm' &&
-                        request.status ===
-                          'pending' && (
-                          <>
-                            <textarea
-                              value={
-                                decisionNotes[
-                                  request
-                                    .id
-                                ] || ''
-                              }
-                              onChange={(
-                                event,
-                              ) =>
-                                setDecisionNotes(
-                                  (
-                                    current,
-                                  ) => ({
-                                    ...current,
-                                    [request.id]:
-                                      event
-                                        .target
-                                        .value,
-                                  }),
-                                )
-                              }
-                              placeholder="Optional decision note"
-                              rows={3}
-                              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-emerald-500"
-                            />
-
-                            <div className="grid grid-cols-2 gap-2">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  decide(
-                                    request,
-                                    'approved',
-                                  )
-                                }
-                                disabled={
-                                  busyId ===
-                                  request.id
-                                }
-                                className="rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-                              >
-                                {busyId ===
-                                request.id
-                                  ? 'Saving...'
-                                  : 'Approve'}
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  decide(
-                                    request,
-                                    'rejected',
-                                  )
-                                }
-                                disabled={
-                                  busyId ===
-                                  request.id
-                                }
-                                className="rounded-2xl border border-red-200 px-4 py-3 text-sm font-bold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-                              >
-                                Reject
-                              </button>
-                            </div>
-                          </>
-                        )}
-
-                      {mode ===
-                        'client' &&
-                        request.status ===
-                          'approved' && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              downloadApproved(
-                                request,
-                              )
+                        <div className="mt-3 grid gap-3 text-sm text-slate-600 md:grid-cols-2 xl:grid-cols-4">
+                          <Info
+                            label="Client"
+                            value={
+                              request.business
+                                ?.name ||
+                              'Selected client'
                             }
-                            disabled={
-                              busyId ===
-                              request.id
-                            }
-                            className="w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            {busyId ===
-                            request.id
-                              ? 'Preparing XLSX...'
-                              : 'Download Approved XLSX'}
-                          </button>
-                        )}
+                          />
 
-                      {mode ===
-                        'firm' &&
-                        request.status ===
-                          'approved' && (
-                          <p className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-700">
-                            Approved.
-                            Waiting for the
-                            requesting client
-                            to download the
-                            XLSX.
+                          <Info
+                            label="Requested by"
+                            value={personLabel(
+                              request.requestedBy,
+                              request.requestedByName,
+                            )}
+                          />
+
+                          <Info
+                            label="Period"
+                            value={`${formatDate(
+                              request.dateFrom,
+                            )} to ${formatDate(
+                              request.dateTo,
+                            )}`}
+                          />
+
+                          <Info
+                            label="Requested"
+                            value={formatDate(
+                              request.createdAt,
+                              true,
+                            )}
+                          />
+                        </div>
+
+                        {request.reason && (
+                          <p className="mt-4 rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                            <span className="font-semibold text-slate-800">
+                              Reason:
+                            </span>{' '}
+                            {
+                              request.reason
+                            }
                           </p>
                         )}
 
-                      {request.status ===
-                        'exporting' && (
-                        <p className="rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm font-semibold text-violet-700">
-                          XLSX generation is
-                          currently in
-                          progress.
-                        </p>
-                      )}
+                        {request.decisionNote && (
+                          <p className="mt-3 rounded-2xl border border-slate-200 px-4 py-3 text-sm text-slate-600">
+                            <span className="font-semibold text-slate-800">
+                              Decision
+                              note:
+                            </span>{' '}
+                            {
+                              request.decisionNote
+                            }
+                          </p>
+                        )}
 
-                      {request.status ===
-                        'exported' && (
-                        <p className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">
-                          Export completed.
-                          This one-time
-                          approval has been
-                          consumed.
-                        </p>
-                      )}
+                        {(request.decidedBy ||
+                          request.decidedByName) && (
+                          <p className="mt-2 text-xs text-slate-400">
+                            Decided by{' '}
+                            {personLabel(
+                              request.decidedBy,
+                              request.decidedByName,
+                            )}
+                          </p>
+                        )}
+
+                        {request.completedAt && (
+                          <p className="mt-2 text-xs text-slate-400">
+                            Completed{' '}
+                            {formatDate(
+                              request.completedAt,
+                              true,
+                            )}
+
+                            {request.completedFilename
+                              ? ` • ${request.completedFilename}`
+                              : ''}
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="w-full space-y-3 lg:w-80">
+                        {mode ===
+                          'firm' &&
+                          request.status ===
+                            'pending' && (
+                            <>
+                              <textarea
+                                value={
+                                  decisionNotes[
+                                    request.id
+                                  ] ||
+                                  ''
+                                }
+                                onChange={(
+                                  event,
+                                ) =>
+                                  setDecisionNotes(
+                                    (
+                                      current,
+                                    ) => ({
+                                      ...current,
+
+                                      [request.id]:
+                                        event
+                                          .target
+                                          .value,
+                                    }),
+                                  )
+                                }
+                                placeholder="Optional decision note"
+                                rows={
+                                  3
+                                }
+                                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-emerald-500"
+                              />
+
+                              <div className="grid grid-cols-2 gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    decide(
+                                      request,
+                                      'approved',
+                                    )
+                                  }
+                                  disabled={
+                                    busyId ===
+                                    request.id
+                                  }
+                                  className="rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  {busyId ===
+                                  request.id
+                                    ? 'Saving…'
+                                    : 'Approve'}
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    decide(
+                                      request,
+                                      'rejected',
+                                    )
+                                  }
+                                  disabled={
+                                    busyId ===
+                                    request.id
+                                  }
+                                  className="rounded-2xl border border-red-200 px-4 py-3 text-sm font-bold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  Reject
+                                </button>
+                              </div>
+                            </>
+                          )}
+
+                        {mode ===
+                          'client' &&
+                          request.status ===
+                            'approved' && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                downloadApproved(
+                                  request,
+                                )
+                              }
+                              disabled={
+                                busyId ===
+                                request.id
+                              }
+                              className="w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {busyId ===
+                              request.id
+                                ? 'Preparing XLSX…'
+                                : `Download approved ${reference}`}
+                            </button>
+                          )}
+
+                        {mode ===
+                          'firm' &&
+                          request.status ===
+                            'approved' && (
+                            <p className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-700">
+                              {
+                                reference
+                              }{' '}
+                              is approved.
+                              Waiting for
+                              the requesting
+                              client to use
+                              the one-time
+                              XLSX approval.
+                            </p>
+                          )}
+
+                        {request.status ===
+                          'exporting' && (
+                          <p className="rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm font-semibold text-violet-700">
+                            XLSX
+                            generation is
+                            currently in
+                            progress.
+                          </p>
+                        )}
+
+                        {request.status ===
+                          'exported' && (
+                          <p className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">
+                            Export
+                            completed
+
+                            {request.exportNo
+                              ? ` as ${request.exportNo}`
+                              : ''}
+                            . The
+                            one-time
+                            approval has
+                            been consumed.
+                          </p>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                </Card>
-              ),
+                  </Card>
+                );
+              },
             )}
           </div>
         ) : (
@@ -852,9 +1209,10 @@ export default function ReportRequestsPage() {
               </h3>
 
               <p className="mt-2 text-sm text-slate-500">
-                Create a request from
-                the Report Builder or
-                select another status
+                Create a request
+                from the Report
+                Builder or adjust
+                the status/search
                 filter.
               </p>
             </div>
@@ -871,7 +1229,9 @@ function Metric({
   detail,
 }: {
   label: string;
+
   value: number;
+
   detail: string;
 }) {
   return (
@@ -896,6 +1256,7 @@ function Info({
   value,
 }: {
   label: string;
+
   value: string;
 }) {
   return (
