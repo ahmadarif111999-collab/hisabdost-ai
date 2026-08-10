@@ -56,11 +56,8 @@ import { ReferenceWorkflowController } from './reference-workflow.controller';
     ExpensePurchaseReferenceService,
 
     {
-      provide:
-        APP_INTERCEPTOR,
-
-      useClass:
-        HumanReadableReferenceInterceptor,
+      provide: APP_INTERCEPTOR,
+      useClass: HumanReadableReferenceInterceptor,
     },
   ],
 
