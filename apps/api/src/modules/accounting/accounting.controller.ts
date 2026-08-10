@@ -7,13 +7,18 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+
 import {
   CurrentUser,
   RequestUser,
 } from '../../common/auth/current-user.decorator';
+
 import { JwtAuthGuard } from '../../common/auth/jwt-auth.guard';
-import { ReferenceNumbersService } from '../reference-numbers/reference-numbers.service';
+
+import { ExpensePurchaseReferenceService } from '../reference-numbers/expense-purchase-reference.service';
+
 import { AccountingService } from './accounting.service';
+
 import {
   CreateAccountDto,
   CreateExpenseDto,
@@ -25,223 +30,184 @@ import {
   RequestReportExportDto,
 } from './dto/accounting.dto';
 
-@Controller('accounting/businesses/:businessId')
+@Controller(
+  'accounting/businesses/:businessId',
+)
 @UseGuards(JwtAuthGuard)
 export class AccountingController {
   constructor(
-    private readonly accounting: AccountingService,
-    private readonly references: ReferenceNumbersService,
+    private readonly accounting:
+      AccountingService,
+
+    private readonly expensePurchaseReferences:
+      ExpensePurchaseReferenceService,
   ) {}
 
   @Get('accounts')
   accounts(
-    @CurrentUser() user: RequestUser,
-    @Param('businessId') businessId: string,
+    @CurrentUser()
+    user: RequestUser,
+
+    @Param('businessId')
+    businessId: string,
   ) {
-    return this.accounting.accounts(user.sub, businessId);
+    return this.accounting.accounts(
+      user.sub,
+      businessId,
+    );
   }
 
   @Post('accounts')
   createAccount(
-    @CurrentUser() user: RequestUser,
-    @Param('businessId') businessId: string,
-    @Body() dto: CreateAccountDto,
-  ) {
-    return this.accounting.createAccount(user.sub, businessId, dto);
-  }
+    @CurrentUser()
+    user: RequestUser,
 
-  @Post('sales')
-  async createSale(
-    @CurrentUser() user: RequestUser,
-    @Param('businessId') businessId: string,
-    @Body() dto: CreateSaleDto,
+    @Param('businessId')
+    businessId: string,
+
+    @Body()
+    dto: CreateAccountDto,
   ) {
-    const result = await this.accounting.createSale(
+    return this.accounting.createAccount(
       user.sub,
       businessId,
       dto,
     );
+  }
 
-    return {
-      ...result,
-      entry: await this.withJournalReference(
-        businessId,
-        result.entry,
-      ),
-    };
+  @Post('sales')
+  createSale(
+    @CurrentUser()
+    user: RequestUser,
+
+    @Param('businessId')
+    businessId: string,
+
+    @Body()
+    dto: CreateSaleDto,
+  ) {
+    return this.accounting.createSale(
+      user.sub,
+      businessId,
+      dto,
+    );
   }
 
   @Post('purchases')
   async createPurchase(
-    @CurrentUser() user: RequestUser,
-    @Param('businessId') businessId: string,
-    @Body() dto: CreatePurchaseDto,
+    @CurrentUser()
+    user: RequestUser,
+
+    @Param('businessId')
+    businessId: string,
+
+    @Body()
+    dto: CreatePurchaseDto,
   ) {
-    const result = await this.accounting.createPurchase(
-      user.sub,
+    const result =
+      await this.accounting.createPurchase(
+        user.sub,
+        businessId,
+        dto,
+      );
+
+    return this.expensePurchaseReferences.decorateCreation(
       businessId,
-      dto,
+      'purchase',
+      result,
     );
-
-    const [purchaseNo, entry] = await Promise.all([
-      this.references.attachReference(
-        businessId,
-        'purchase',
-        result.purchase.id,
-        result.purchase.expenseDate,
-      ),
-      this.withJournalReference(
-        businessId,
-        result.entry,
-      ),
-    ]);
-
-    return {
-      ...result,
-      purchase: {
-        ...result.purchase,
-        referenceNo: purchaseNo,
-        purchaseNo,
-        displayNumber: purchaseNo,
-      },
-      entry,
-    };
   }
 
   @Post('expenses')
   async createExpense(
-    @CurrentUser() user: RequestUser,
-    @Param('businessId') businessId: string,
-    @Body() dto: CreateExpenseDto,
+    @CurrentUser()
+    user: RequestUser,
+
+    @Param('businessId')
+    businessId: string,
+
+    @Body()
+    dto: CreateExpenseDto,
   ) {
-    const result = await this.accounting.createExpense(
-      user.sub,
+    const result =
+      await this.accounting.createExpense(
+        user.sub,
+        businessId,
+        dto,
+      );
+
+    return this.expensePurchaseReferences.decorateCreation(
       businessId,
-      dto,
+      'expense',
+      result,
     );
-
-    const [expenseNo, entry] = await Promise.all([
-      this.references.attachReference(
-        businessId,
-        'expense',
-        result.expense.id,
-        result.expense.expenseDate,
-      ),
-      this.withJournalReference(
-        businessId,
-        result.entry,
-      ),
-    ]);
-
-    return {
-      ...result,
-      expense: {
-        ...result.expense,
-        referenceNo: expenseNo,
-        expenseNo,
-        displayNumber: expenseNo,
-      },
-      entry,
-    };
   }
 
-  @Post('payments/receive')
-  async receivePayment(
-    @CurrentUser() user: RequestUser,
-    @Param('businessId') businessId: string,
-    @Body() dto: CreatePaymentDto,
+  @Post(
+    'payments/receive',
+  )
+  receivePayment(
+    @CurrentUser()
+    user: RequestUser,
+
+    @Param('businessId')
+    businessId: string,
+
+    @Body()
+    dto: CreatePaymentDto,
   ) {
-    const result = await this.accounting.receivePayment(
+    return this.accounting.receivePayment(
       user.sub,
       businessId,
       dto,
     );
-
-    const [paymentNo, entry] = await Promise.all([
-      this.references.attachReference(
-        businessId,
-        'payment',
-        result.payment.id,
-        result.payment.paymentDate,
-      ),
-      this.withJournalReference(
-        businessId,
-        result.entry,
-      ),
-    ]);
-
-    return {
-      ...result,
-      payment: {
-        ...result.payment,
-        paymentNo,
-        displayNumber: paymentNo,
-      },
-      entry,
-    };
   }
 
-  @Post('payments/pay-supplier')
-  async paySupplier(
-    @CurrentUser() user: RequestUser,
-    @Param('businessId') businessId: string,
-    @Body() dto: CreatePaymentDto,
+  @Post(
+    'payments/pay-supplier',
+  )
+  paySupplier(
+    @CurrentUser()
+    user: RequestUser,
+
+    @Param('businessId')
+    businessId: string,
+
+    @Body()
+    dto: CreatePaymentDto,
   ) {
-    const result = await this.accounting.paySupplier(
+    return this.accounting.paySupplier(
       user.sub,
       businessId,
       dto,
     );
-
-    const [paymentNo, entry] = await Promise.all([
-      this.references.attachReference(
-        businessId,
-        'payment',
-        result.payment.id,
-        result.payment.paymentDate,
-      ),
-      this.withJournalReference(
-        businessId,
-        result.entry,
-      ),
-    ]);
-
-    return {
-      ...result,
-      payment: {
-        ...result.payment,
-        paymentNo,
-        displayNumber: paymentNo,
-      },
-      entry,
-    };
   }
 
   @Post('journals')
-  async createJournalEntry(
-    @CurrentUser() user: RequestUser,
-    @Param('businessId') businessId: string,
-    @Body() dto: CreateJournalEntryDto,
+  createJournalEntry(
+    @CurrentUser()
+    user: RequestUser,
+
+    @Param('businessId')
+    businessId: string,
+
+    @Body()
+    dto: CreateJournalEntryDto,
   ) {
-    const result = await this.accounting.createJournalEntry(
+    return this.accounting.createJournalEntry(
       user.sub,
       businessId,
       dto,
     );
-
-    return {
-      ...result,
-      entry: await this.withJournalReference(
-        businessId,
-        result.entry,
-      ),
-    };
   }
 
   @Get('dashboard')
   dashboard(
-    @CurrentUser() user: RequestUser,
-    @Param('businessId') businessId: string,
+    @CurrentUser()
+    user: RequestUser,
+
+    @Param('businessId')
+    businessId: string,
   ) {
     return this.accounting.dashboard(
       user.sub,
@@ -249,12 +215,21 @@ export class AccountingController {
     );
   }
 
-  @Get('reports/profit-loss')
+  @Get(
+    'reports/profit-loss',
+  )
   profitLoss(
-    @CurrentUser() user: RequestUser,
-    @Param('businessId') businessId: string,
-    @Query('from') from?: string,
-    @Query('to') to?: string,
+    @CurrentUser()
+    user: RequestUser,
+
+    @Param('businessId')
+    businessId: string,
+
+    @Query('from')
+    from?: string,
+
+    @Query('to')
+    to?: string,
   ) {
     return this.accounting.profitLoss(
       user.sub,
@@ -264,10 +239,15 @@ export class AccountingController {
     );
   }
 
-  @Get('reports/balance-sheet')
+  @Get(
+    'reports/balance-sheet',
+  )
   balanceSheet(
-    @CurrentUser() user: RequestUser,
-    @Param('businessId') businessId: string,
+    @CurrentUser()
+    user: RequestUser,
+
+    @Param('businessId')
+    businessId: string,
   ) {
     return this.accounting.balanceSheet(
       user.sub,
@@ -275,10 +255,15 @@ export class AccountingController {
     );
   }
 
-  @Get('reports/trial-balance')
+  @Get(
+    'reports/trial-balance',
+  )
   trialBalance(
-    @CurrentUser() user: RequestUser,
-    @Param('businessId') businessId: string,
+    @CurrentUser()
+    user: RequestUser,
+
+    @Param('businessId')
+    businessId: string,
   ) {
     return this.accounting.trialBalance(
       user.sub,
@@ -288,8 +273,11 @@ export class AccountingController {
 
   @Get('reports/sales')
   salesReport(
-    @CurrentUser() user: RequestUser,
-    @Param('businessId') businessId: string,
+    @CurrentUser()
+    user: RequestUser,
+
+    @Param('businessId')
+    businessId: string,
   ) {
     return this.accounting.salesReport(
       user.sub,
@@ -297,32 +285,61 @@ export class AccountingController {
     );
   }
 
-  @Get('reports/purchases')
-  purchasesReport(
-    @CurrentUser() user: RequestUser,
-    @Param('businessId') businessId: string,
+  @Get(
+    'reports/purchases',
+  )
+  async purchasesReport(
+    @CurrentUser()
+    user: RequestUser,
+
+    @Param('businessId')
+    businessId: string,
   ) {
-    return this.accounting.purchaseSummary(
-      user.sub,
+    const result =
+      await this.accounting.purchaseSummary(
+        user.sub,
+        businessId,
+      );
+
+    return this.expensePurchaseReferences.decorateReportPayload(
       businessId,
+      'purchase',
+      result,
     );
   }
 
-  @Get('reports/expenses')
-  expensesReport(
-    @CurrentUser() user: RequestUser,
-    @Param('businessId') businessId: string,
+  @Get(
+    'reports/expenses',
+  )
+  async expensesReport(
+    @CurrentUser()
+    user: RequestUser,
+
+    @Param('businessId')
+    businessId: string,
   ) {
-    return this.accounting.expensesReport(
-      user.sub,
+    const result =
+      await this.accounting.expensesReport(
+        user.sub,
+        businessId,
+      );
+
+    return this.expensePurchaseReferences.decorateReportPayload(
       businessId,
+      'expense',
+      result,
     );
   }
 
-  @Get('reports/receivables')
+  @Get(
+    'reports/receivables',
+  )
   receivables(
-    @CurrentUser() user: RequestUser,
-    @Param('businessId') businessId: string,
+    @CurrentUser()
+    user: RequestUser,
+
+    @Param('businessId')
+    businessId: string,
   ) {
     return this.accounting.receivables(
       user.sub,
@@ -330,10 +347,15 @@ export class AccountingController {
     );
   }
 
-  @Get('reports/payables')
+  @Get(
+    'reports/payables',
+  )
   payables(
-    @CurrentUser() user: RequestUser,
-    @Param('businessId') businessId: string,
+    @CurrentUser()
+    user: RequestUser,
+
+    @Param('businessId')
+    businessId: string,
   ) {
     return this.accounting.payables(
       user.sub,
@@ -341,10 +363,15 @@ export class AccountingController {
     );
   }
 
-  @Get('reports/missing-documents')
+  @Get(
+    'reports/missing-documents',
+  )
   missingDocuments(
-    @CurrentUser() user: RequestUser,
-    @Param('businessId') businessId: string,
+    @CurrentUser()
+    user: RequestUser,
+
+    @Param('businessId')
+    businessId: string,
   ) {
     return this.accounting.missingDocuments(
       user.sub,
@@ -352,11 +379,20 @@ export class AccountingController {
     );
   }
 
-  @Get('ledgers/:accountIdOrCode')
+  @Get(
+    'ledgers/:accountIdOrCode',
+  )
   ledger(
-    @CurrentUser() user: RequestUser,
-    @Param('businessId') businessId: string,
-    @Param('accountIdOrCode') accountIdOrCode: string,
+    @CurrentUser()
+    user: RequestUser,
+
+    @Param('businessId')
+    businessId: string,
+
+    @Param(
+      'accountIdOrCode',
+    )
+    accountIdOrCode: string,
   ) {
     return this.accounting.ledger(
       user.sub,
@@ -365,37 +401,127 @@ export class AccountingController {
     );
   }
 
-  @Post('reports/preview')
-  previewReport(
-    @CurrentUser() user: RequestUser,
-    @Param('businessId') businessId: string,
-    @Body() dto: ExportReportDto,
+  @Post(
+    'reports/preview',
+  )
+  async previewReport(
+    @CurrentUser()
+    user: RequestUser,
+
+    @Param('businessId')
+    businessId: string,
+
+    @Body()
+    dto: ExportReportDto,
   ) {
-    return this.accounting.previewReport(
-      user.sub,
-      businessId,
-      dto,
-    );
+    const result =
+      await this.accounting.previewReport(
+        user.sub,
+        businessId,
+        dto,
+      );
+
+    if (
+      dto.reportType ===
+      'purchases'
+    ) {
+      return this.expensePurchaseReferences.decorateReportPayload(
+        businessId,
+        'purchase',
+        result,
+      );
+    }
+
+    if (
+      dto.reportType ===
+      'expenses'
+    ) {
+      return this.expensePurchaseReferences.decorateReportPayload(
+        businessId,
+        'expense',
+        result,
+      );
+    }
+
+    return result;
   }
 
-  @Post('reports/export')
-  exportReport(
-    @CurrentUser() user: RequestUser,
-    @Param('businessId') businessId: string,
-    @Body() dto: ExportReportDto,
+  @Post(
+    'reports/export',
+  )
+  async exportReport(
+    @CurrentUser()
+    user: RequestUser,
+
+    @Param('businessId')
+    businessId: string,
+
+    @Body()
+    dto: ExportReportDto,
   ) {
-    return this.accounting.exportReport(
-      user.sub,
-      businessId,
-      dto,
-    );
+    const result =
+      await this.accounting.exportReport(
+        user.sub,
+        businessId,
+        dto,
+      );
+
+    /*
+     * The existing legacy exporter generates its file content
+     * inside AccountingService before reaching this controller.
+     *
+     * We can still make the returned report object readable here.
+     * Full cleanup of legacy export-file content belongs to the
+     * frozen XLSX/report cleanup implementation later in the
+     * roadmap.
+     */
+    if (
+      dto.reportType ===
+      'purchases'
+    ) {
+      return {
+        ...result,
+
+        report:
+          await this.expensePurchaseReferences.decorateReportPayload(
+            businessId,
+            'purchase',
+            result.report,
+          ),
+      };
+    }
+
+    if (
+      dto.reportType ===
+      'expenses'
+    ) {
+      return {
+        ...result,
+
+        report:
+          await this.expensePurchaseReferences.decorateReportPayload(
+            businessId,
+            'expense',
+            result.report,
+          ),
+      };
+    }
+
+    return result;
   }
 
-  @Post('reports/request-export')
+  @Post(
+    'reports/request-export',
+  )
   requestReportExport(
-    @CurrentUser() user: RequestUser,
-    @Param('businessId') businessId: string,
-    @Body() dto: RequestReportExportDto,
+    @CurrentUser()
+    user: RequestUser,
+
+    @Param('businessId')
+    businessId: string,
+
+    @Body()
+    dto: RequestReportExportDto,
   ) {
     return this.accounting.requestReportExport(
       user.sub,
@@ -404,12 +530,21 @@ export class AccountingController {
     );
   }
 
-  @Get('reports/cash-bank')
+  @Get(
+    'reports/cash-bank',
+  )
   cashBank(
-    @CurrentUser() user: RequestUser,
-    @Param('businessId') businessId: string,
-    @Query('from') from?: string,
-    @Query('to') to?: string,
+    @CurrentUser()
+    user: RequestUser,
+
+    @Param('businessId')
+    businessId: string,
+
+    @Query('from')
+    from?: string,
+
+    @Query('to')
+    to?: string,
   ) {
     return this.accounting.cashBankReport(
       user.sub,
@@ -419,12 +554,21 @@ export class AccountingController {
     );
   }
 
-  @Get('reports/tax-summary')
+  @Get(
+    'reports/tax-summary',
+  )
   taxSummary(
-    @CurrentUser() user: RequestUser,
-    @Param('businessId') businessId: string,
-    @Query('from') from?: string,
-    @Query('to') to?: string,
+    @CurrentUser()
+    user: RequestUser,
+
+    @Param('businessId')
+    businessId: string,
+
+    @Query('from')
+    from?: string,
+
+    @Query('to')
+    to?: string,
   ) {
     return this.accounting.taxSummary(
       user.sub,
@@ -434,10 +578,15 @@ export class AccountingController {
     );
   }
 
-  @Get('reports/account-usage')
+  @Get(
+    'reports/account-usage',
+  )
   accountUsage(
-    @CurrentUser() user: RequestUser,
-    @Param('businessId') businessId: string,
+    @CurrentUser()
+    user: RequestUser,
+
+    @Param('businessId')
+    businessId: string,
   ) {
     return this.accounting.accountUsageReport(
       user.sub,
@@ -445,34 +594,19 @@ export class AccountingController {
     );
   }
 
-  @Get('reports/monthly-closing')
+  @Get(
+    'reports/monthly-closing',
+  )
   monthlyClosing(
-    @CurrentUser() user: RequestUser,
-    @Param('businessId') businessId: string,
+    @CurrentUser()
+    user: RequestUser,
+
+    @Param('businessId')
+    businessId: string,
   ) {
     return this.accounting.monthlyClosingReport(
       user.sub,
       businessId,
     );
-  }
-
-  private async withJournalReference<
-    T extends {
-      id: string;
-      entryDate: Date | string;
-    },
-  >(businessId: string, entry: T) {
-    const entryNo = await this.references.attachReference(
-      businessId,
-      'journal',
-      entry.id,
-      entry.entryDate,
-    );
-
-    return {
-      ...entry,
-      entryNo,
-      displayNumber: entryNo,
-    };
   }
 }
