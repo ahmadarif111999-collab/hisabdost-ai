@@ -13,6 +13,8 @@ import { AuthModule } from '../auth/auth.module';
 
 import { BusinessesModule } from '../businesses/businesses.module';
 
+import { ExpensePurchaseReferenceService } from './expense-purchase-reference.service';
+
 import { ExpensePurchaseRegistersController } from './expense-purchase-registers.controller';
 
 import { ExpensePurchaseRegistersService } from './expense-purchase-registers.service';
@@ -51,10 +53,14 @@ import { ReferenceWorkflowController } from './reference-workflow.controller';
     ReferenceResolutionService,
     PaymentActivityService,
     ExpensePurchaseRegistersService,
+    ExpensePurchaseReferenceService,
 
     {
-      provide: APP_INTERCEPTOR,
-      useClass: HumanReadableReferenceInterceptor,
+      provide:
+        APP_INTERCEPTOR,
+
+      useClass:
+        HumanReadableReferenceInterceptor,
     },
   ],
 
@@ -64,6 +70,7 @@ import { ReferenceWorkflowController } from './reference-workflow.controller';
     ReferenceResolutionService,
     PaymentActivityService,
     ExpensePurchaseRegistersService,
+    ExpensePurchaseReferenceService,
   ],
 })
 export class ReferenceNumbersModule {}
