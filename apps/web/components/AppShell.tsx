@@ -1,8 +1,18 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
+
+import {
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
+
+import {
+  usePathname,
+  useRouter,
+} from 'next/navigation';
+
 import {
   api,
   clearBusinessId,
@@ -14,128 +24,345 @@ import {
 
 type Business = {
   id: string;
+
   name: string;
+
   businessType?: string;
+
   city?: string;
+
   organization?: {
     type: string;
   };
 };
 
-type NavItem = [label: string, href: string];
+type NavItem = [
+  label: string,
+  href: string,
+];
 
 type NavGroup = {
   title: string;
+
   items: NavItem[];
 };
 
 const navGroups: NavGroup[] = [
   {
     title: 'Firm',
+
     items: [
-      ['Firm Dashboard', '/firm'],
-      ['Approvals', '/approvals'],
-      ['Account Library', '/account-library'],
+      [
+        'Firm Dashboard',
+        '/firm',
+      ],
+
+      [
+        'Approvals',
+        '/approvals',
+      ],
+
+      [
+        'Account Library',
+        '/account-library',
+      ],
     ],
   },
+
   {
     title: 'Client Books',
+
     items: [
-      ['Dashboard', '/dashboard'],
-      ['Periods', '/periods'],
-      ['Opening Balances', '/opening-balances'],
-      ['Transactions', '/transactions'],
-      ['Cash & Bank', '/cash-bank'],
-      ['Accounts', '/accounts'],
-      ['Ledgers', '/ledgers'],
-      ['Journals', '/journals'],
+      [
+        'Dashboard',
+        '/dashboard',
+      ],
+
+      [
+        'Periods',
+        '/periods',
+      ],
+
+      [
+        'Opening Balances',
+        '/opening-balances',
+      ],
+
+      [
+        'Transactions',
+        '/transactions',
+      ],
+
+      [
+        'Expenses',
+        '/expenses',
+      ],
+
+      [
+        'Purchases',
+        '/purchases',
+      ],
+
+      [
+        'Cash & Bank',
+        '/cash-bank',
+      ],
+
+      [
+        'Accounts',
+        '/accounts',
+      ],
+
+      [
+        'Ledgers',
+        '/ledgers',
+      ],
+
+      [
+        'Journals',
+        '/journals',
+      ],
     ],
   },
+
   {
-    title: 'Documents & Reports',
+    title:
+      'Documents & Reports',
+
     items: [
-      ['Invoices', '/invoices'],
-      ['Documents', '/documents'],
-      ['Reports', '/reports'],
-      ['Report Requests', '/report-requests'],
-      ['Financial Statements', '/financial-statements'],
-      ['AI Assistant', '/chat'],
-      ['Compliance', '/compliance'],
-      ['Users', '/accountant'],
+      [
+        'Invoices',
+        '/invoices',
+      ],
+
+      [
+        'Documents',
+        '/documents',
+      ],
+
+      [
+        'Reports',
+        '/reports',
+      ],
+
+      [
+        'Report Requests',
+        '/report-requests',
+      ],
+
+      [
+        'Financial Statements',
+        '/financial-statements',
+      ],
+
+      [
+        'AI Assistant',
+        '/chat',
+      ],
+
+      [
+        'Compliance',
+        '/compliance',
+      ],
+
+      [
+        'Users',
+        '/accountant',
+      ],
     ],
   },
 ];
 
-const pageLabels: Record<string, string> = {
-  '/firm': 'Firm Dashboard',
-  '/approvals': 'Approvals',
-  '/account-library': 'Account Library',
-  '/dashboard': 'Client Dashboard',
-  '/periods': 'Accounting Periods',
-  '/opening-balances': 'Opening Balances',
-  '/transactions': 'Transactions',
-  '/cash-bank': 'Cash & Bank',
-  '/accounts': 'Accounts',
-  '/ledgers': 'Ledgers',
-  '/journals': 'Journals',
-  '/invoices': 'Invoices',
-  '/documents': 'Documents',
-  '/reports': 'Reports',
-  '/report-requests': 'Report Requests',
-  '/financial-statements': 'Financial Statements',
-  '/chat': 'AI Assistant',
-  '/compliance': 'Compliance',
-  '/accountant': 'Users',
+const pageLabels: Record<
+  string,
+  string
+> = {
+  '/firm':
+    'Firm Dashboard',
+
+  '/approvals':
+    'Approvals',
+
+  '/account-library':
+    'Account Library',
+
+  '/dashboard':
+    'Client Dashboard',
+
+  '/periods':
+    'Accounting Periods',
+
+  '/opening-balances':
+    'Opening Balances',
+
+  '/transactions':
+    'Transactions',
+
+  '/expenses':
+    'Expense Register',
+
+  '/purchases':
+    'Purchase Register',
+
+  '/cash-bank':
+    'Cash & Bank',
+
+  '/accounts':
+    'Accounts',
+
+  '/ledgers':
+    'Ledgers',
+
+  '/journals':
+    'Journals',
+
+  '/invoices':
+    'Invoices',
+
+  '/documents':
+    'Documents',
+
+  '/reports':
+    'Reports',
+
+  '/report-requests':
+    'Report Requests',
+
+  '/financial-statements':
+    'Financial Statements',
+
+  '/chat':
+    'AI Assistant',
+
+  '/compliance':
+    'Compliance',
+
+  '/accountant':
+    'Users',
 };
 
-export function AppShell({ children }: { children: React.ReactNode }) {
-  const router = useRouter();
-  const pathname = usePathname();
-  const [businesses, setBusinesses] = useState<Business[]>([]);
-  const [selected, setSelected] = useState('');
-  const [authChecked, setAuthChecked] = useState(false);
+export function AppShell({
+  children,
+}: {
+  children:
+    React.ReactNode;
+}) {
+  const router =
+    useRouter();
 
-  const selectedBusiness = businesses.find((business) => business.id === selected);
-  const pageTitle = useMemo(() => pageLabels[pathname] || 'HisabDost AI', [pathname]);
-  const showBackToFirm = pathname !== '/firm';
+  const pathname =
+    usePathname();
+
+  const [
+    businesses,
+    setBusinesses,
+  ] =
+    useState<Business[]>(
+      [],
+    );
+
+  const [
+    selected,
+    setSelected,
+  ] =
+    useState('');
+
+  const [
+    authChecked,
+    setAuthChecked,
+  ] =
+    useState(false);
+
+  const selectedBusiness =
+    businesses.find(
+      (business) =>
+        business.id ===
+        selected,
+    );
+
+  const pageTitle =
+    useMemo(
+      () =>
+        pageLabels[
+          pathname
+        ] ||
+        'HisabDost AI',
+      [pathname],
+    );
+
+  const showBackToFirm =
+    pathname !== '/firm';
 
   async function loadBusinesses() {
     try {
-      const list = await api<Business[]>('/businesses');
+      const list =
+        await api<
+          Business[]
+        >('/businesses');
+
       setBusinesses(list);
 
-      const current = getBusinessId();
-      const next = current && list.some((business) => business.id === current) ? current : '';
+      const current =
+        getBusinessId();
+
+      const next =
+        current &&
+        list.some(
+          (business) =>
+            business.id ===
+            current,
+        )
+          ? current
+          : '';
 
       setSelected(next);
 
-      if (!next && current) {
+      if (
+        !next &&
+        current
+      ) {
         clearBusinessId();
       }
     } catch {
-      // api() handles expired sessions and redirects to login.
+      // api() handles expired sessions
+      // and redirects to login.
     }
   }
 
   useEffect(() => {
-    const token = getToken();
+    const token =
+      getToken();
 
     if (!token) {
-      router.replace('/login');
+      router.replace(
+        '/login',
+      );
+
       return;
     }
 
-    setAuthChecked(true);
+    setAuthChecked(
+      true,
+    );
+
     void loadBusinesses();
 
-    window.addEventListener('pakbooks-business-changed', loadBusinesses);
+    window.addEventListener(
+      'pakbooks-business-changed',
+      loadBusinesses,
+    );
 
     return () => {
-      window.removeEventListener('pakbooks-business-changed', loadBusinesses);
+      window.removeEventListener(
+        'pakbooks-business-changed',
+        loadBusinesses,
+      );
     };
   }, [router]);
 
-  function switchClient(id: string) {
+  function switchClient(
+    id: string,
+  ) {
     setSelected(id);
 
     if (id) {
@@ -144,21 +371,35 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       clearBusinessId();
     }
 
-    window.dispatchEvent(new Event('pakbooks-business-changed'));
+    window.dispatchEvent(
+      new Event(
+        'pakbooks-business-changed',
+      ),
+    );
+
     router.refresh();
   }
 
   function logout() {
     clearToken();
-    router.replace('/login');
+
+    router.replace(
+      '/login',
+    );
   }
 
   if (!authChecked) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
         <div className="rounded-3xl border border-slate-200 bg-white p-6 text-center shadow-sm">
-          <p className="text-sm font-semibold text-slate-700">Opening workspace...</p>
-          <p className="mt-1 text-xs text-slate-500">Please wait.</p>
+          <p className="text-sm font-semibold text-slate-700">
+            Opening
+            workspace...
+          </p>
+
+          <p className="mt-1 text-xs text-slate-500">
+            Please wait.
+          </p>
         </div>
       </main>
     );
@@ -169,9 +410,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-72 border-r border-slate-200 bg-slate-950 text-white lg:block">
         <div className="flex h-full flex-col p-5">
           <div>
-            <Link href="/firm" className="block">
-              <p className="text-xl font-bold">HisabDost AI</p>
-              <p className="mt-1 text-xs text-slate-400">Firm-controlled accounting SaaS</p>
+            <Link
+              href="/firm"
+              className="block"
+            >
+              <p className="text-xl font-bold">
+                HisabDost AI
+              </p>
+
+              <p className="mt-1 text-xs text-slate-400">
+                Firm-controlled
+                accounting SaaS
+              </p>
             </Link>
           </div>
 
@@ -181,52 +431,111 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </label>
 
             <select
-              value={selected}
-              onChange={(event) => switchClient(event.target.value)}
+              value={
+                selected
+              }
+              onChange={(
+                event,
+              ) =>
+                switchClient(
+                  event.target
+                    .value,
+                )
+              }
               className="w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-white outline-none"
             >
-              <option value="">No client selected</option>
+              <option value="">
+                No client
+                selected
+              </option>
 
-              {businesses.map((business) => (
-                <option key={business.id} value={business.id}>
-                  {business.name}
-                </option>
-              ))}
+              {businesses.map(
+                (
+                  business,
+                ) => (
+                  <option
+                    key={
+                      business.id
+                    }
+                    value={
+                      business.id
+                    }
+                  >
+                    {
+                      business.name
+                    }
+                  </option>
+                ),
+              )}
             </select>
 
             {!businesses.length && (
               <p className="mt-2 text-xs text-slate-400">
-                0 / 10 client slots used. Add a client first.
+                0 / 10 client
+                slots used. Add a
+                client first.
               </p>
             )}
 
             {selectedBusiness && (
               <p className="mt-2 text-xs text-slate-400">
-                {selectedBusiness.businessType || 'Business'}
-                {selectedBusiness.city ? ` • ${selectedBusiness.city}` : ''}
+                {selectedBusiness.businessType ||
+                  'Business'}
+
+                {selectedBusiness.city
+                  ? ` • ${selectedBusiness.city}`
+                  : ''}
               </p>
             )}
           </div>
 
           <nav className="mt-6 flex-1 space-y-6 overflow-y-auto pr-1">
-            {navGroups.map((group) => (
-              <div key={group.title}>
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  {group.title}
-                </p>
+            {navGroups.map(
+              (group) => (
+                <div
+                  key={
+                    group.title
+                  }
+                >
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    {
+                      group.title
+                    }
+                  </p>
 
-                <div className="space-y-1">
-                  {group.items.map(([label, href]) => (
-                    <NavLink key={href} href={href} label={label} pathname={pathname} />
-                  ))}
+                  <div className="space-y-1">
+                    {group.items.map(
+                      ([
+                        label,
+                        href,
+                      ]) => (
+                        <NavLink
+                          key={
+                            href
+                          }
+                          href={
+                            href
+                          }
+                          label={
+                            label
+                          }
+                          pathname={
+                            pathname
+                          }
+                        />
+                      ),
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              ),
+            )}
           </nav>
 
           <button
             type="button"
-            onClick={logout}
+            onClick={
+              logout
+            }
             className="mt-6 w-full rounded-2xl border border-white/10 px-3 py-2 text-sm text-slate-200 hover:bg-white/10"
           >
             Logout
@@ -246,21 +555,37 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   Firm Dashboard
                 </Link>
 
-                {pathname !== '/firm' && (
+                {pathname !==
+                  '/firm' && (
                   <>
-                    <span>/</span>
-                    <span>{pageTitle}</span>
+                    <span>
+                      /
+                    </span>
+
+                    <span>
+                      {
+                        pageTitle
+                      }
+                    </span>
                   </>
                 )}
               </div>
 
-              <h1 className="mt-1 text-xl font-bold text-slate-900">{pageTitle}</h1>
+              <h1 className="mt-1 text-xl font-bold text-slate-900">
+                {pageTitle}
+              </h1>
 
-              {selectedBusiness && pathname !== '/firm' && (
-                <p className="mt-1 text-xs text-slate-500">
-                  Selected client: {selectedBusiness.name}
-                </p>
-              )}
+              {selectedBusiness &&
+                pathname !==
+                  '/firm' && (
+                  <p className="mt-1 text-xs text-slate-500">
+                    Selected
+                    client:{' '}
+                    {
+                      selectedBusiness.name
+                    }
+                  </p>
+                )}
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
@@ -269,13 +594,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   href="/firm"
                   className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
                 >
-                  ← Back to Firm Dashboard
+                  ← Back to Firm
+                  Dashboard
                 </Link>
               )}
 
               <button
                 type="button"
-                onClick={logout}
+                onClick={
+                  logout
+                }
                 className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 lg:hidden"
               >
                 Logout
@@ -285,40 +613,80 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
           <div className="mt-3 grid gap-3 lg:hidden">
             <select
-              value={selected}
-              onChange={(event) => switchClient(event.target.value)}
+              value={
+                selected
+              }
+              onChange={(
+                event,
+              ) =>
+                switchClient(
+                  event.target
+                    .value,
+                )
+              }
               className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none"
             >
-              <option value="">No client selected</option>
+              <option value="">
+                No client
+                selected
+              </option>
 
-              {businesses.map((business) => (
-                <option key={business.id} value={business.id}>
-                  {business.name}
-                </option>
-              ))}
+              {businesses.map(
+                (
+                  business,
+                ) => (
+                  <option
+                    key={
+                      business.id
+                    }
+                    value={
+                      business.id
+                    }
+                  >
+                    {
+                      business.name
+                    }
+                  </option>
+                ),
+              )}
             </select>
 
             <div className="flex gap-2 overflow-x-auto pb-1">
-              {navGroups.flatMap((group) =>
-                group.items.map(([label, href]) => (
-                  <Link
-                    key={href}
-                    href={href}
-                    className={`whitespace-nowrap rounded-xl border px-3 py-2 text-xs font-semibold ${
-                      pathname === href
-                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                        : 'border-slate-200 bg-white text-slate-700'
-                    }`}
-                  >
-                    {label}
-                  </Link>
-                )),
+              {navGroups.flatMap(
+                (group) =>
+                  group.items.map(
+                    ([
+                      label,
+                      href,
+                    ]) => (
+                      <Link
+                        key={
+                          href
+                        }
+                        href={
+                          href
+                        }
+                        className={`whitespace-nowrap rounded-xl border px-3 py-2 text-xs font-semibold ${
+                          pathname ===
+                          href
+                            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                            : 'border-slate-200 bg-white text-slate-700'
+                        }`}
+                      >
+                        {
+                          label
+                        }
+                      </Link>
+                    ),
+                  ),
               )}
             </div>
           </div>
         </header>
 
-        <main>{children}</main>
+        <main>
+          {children}
+        </main>
       </div>
     </div>
   );
@@ -330,10 +698,13 @@ function NavLink({
   pathname,
 }: {
   href: string;
+
   label: string;
+
   pathname: string;
 }) {
-  const active = pathname === href;
+  const active =
+    pathname === href;
 
   return (
     <Link
