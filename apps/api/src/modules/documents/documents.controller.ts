@@ -119,17 +119,17 @@ export class DocumentsController {
         document.documentType ===
           'INVOICE')
     ) {
-      const ocrResult =
-        await this.documents.processOcr(
-          user.sub,
-          businessId,
-          document.id,
+      try {
+        const ocrResult = await this.documents.processOcr(
+          user.sub, businessId, document.id,
         );
-
-      return {
-        document,
-        ocrResult,
-      };
+        return { document, documentNo: document.documentNo, ocrResult,
+          message: `${document.documentNo} uploaded. Review the OCR result before posting.` };
+      } catch {
+        return { document, documentNo: document.documentNo, ocrResult: null,
+          ocrError: 'OCR could not be completed. Manual correction is available.',
+          message: `${document.documentNo} uploaded successfully, but OCR could not be completed.` };
+      }
     }
 
     return document;
