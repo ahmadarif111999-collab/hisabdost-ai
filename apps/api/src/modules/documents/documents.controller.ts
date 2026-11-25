@@ -11,12 +11,7 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { DocumentType } from '@prisma/client';
-import { diskStorage } from 'multer';
-import {
-  existsSync,
-  mkdirSync,
-} from 'fs';
-import { extname } from 'path';
+import { memoryStorage } from 'multer';
 import {
   CurrentUser,
   RequestUser,
@@ -29,36 +24,7 @@ import {
 import { DocumentsService } from './documents.service';
 
 const documentUploadOptions = {
-  storage: diskStorage({
-    destination: (
-      _request,
-      _file,
-      callback,
-    ) => {
-      const directory =
-        process.env.UPLOAD_DIR ||
-        'uploads';
-
-      if (!existsSync(directory)) {
-        mkdirSync(directory, {
-          recursive: true,
-        });
-      }
-
-      callback(null, directory);
-    },
-    filename: (
-      _request,
-      file,
-      callback,
-    ) => {
-      const uniqueName = `${Date.now()}-${Math.round(
-        Math.random() * 1e9,
-      )}${extname(file.originalname)}`;
-
-      callback(null, uniqueName);
-    },
-  }),
+  storage: memoryStorage(),
   limits: {
     fileSize: 10 * 1024 * 1024,
   },
