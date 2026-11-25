@@ -122,13 +122,17 @@ export class OcrService {
   }
 
   private async readPrivateBlob(pathname: string): Promise<Buffer> {
-    const token = this.config.get<string>('BLOB_READ_WRITE_TOKEN');
-    if (!token) throw new Error('Private document storage credential is missing');
+    const token = this.config.get<string>('BLOB_READ_WRITE_TOKEN')?.trim();
+    const storeId = this.config.get<string>('BLOB_STORE_ID')?.trim();
+    // The SDK resolves the short-lived Vercel OIDC token at call time.
+    // An explicit legacy token takes priority, so only pass it if no store ID is configured.
+    const auth = storeId ? { storeId } : token ? { token } : {};
+    if (!storeId && !token) throw new Error('Private Blob store ID or legacy credential is missing');
     try {
       if (!/^documents\/[a-zA-Z0-9_-]+\/[a-f0-9-]+(?:\.[a-z0-9]{1,10})?$/.test(pathname)) {
         throw new Error('Invalid private document pathname');
       }
-      const result = await get(pathname, { access: 'private', token });
+      const result = await get(pathname, { access: 'private', ...auth });
       if (!result || result.statusCode !== 200 || !result.stream) throw new Error('Stored document not found');
       const reader = result.stream.getReader();
       const chunks: Buffer[] = [];
