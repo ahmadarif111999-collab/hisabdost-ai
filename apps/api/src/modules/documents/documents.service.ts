@@ -770,8 +770,12 @@ export class DocumentsService {
     file: Express.Multer.File,
     persist: (fileUrl: string) => Promise<T>,
   ): Promise<T> {
-    const token = this.config.get<string>('BLOB_READ_WRITE_TOKEN');
-    const useBlob = process.env.VERCEL === '1' || Boolean(token);
+    const token = this.config.get<string>('BLOB_READ_WRITE_TOKEN')?.trim();
+    const storeId = this.config.get<string>('BLOB_STORE_ID')?.trim();
+    // The SDK resolves the short-lived Vercel OIDC token at call time.
+    // An explicit legacy token takes priority, so only pass it if no store ID is configured.
+    const auth = storeId ? { storeId } : token ? { token } : {};
+    const useBlob = process.env.VERCEL === '1' || Boolean(storeId || token);
     const extension = extname(file.originalname).toLowerCase();
     const safeExtension = /^\.[a-z0-9]{1,10}$/.test(extension) ? extension : '';
     const filename = `${randomUUID()}${safeExtension}`;
@@ -780,12 +784,12 @@ export class DocumentsService {
 
     try {
       if (useBlob) {
-        if (!token) {
-          throw new Error('Private Blob credential is not configured');
+        if (!storeId && !token) {
+          throw new Error('Private Blob store ID or legacy credential is not configured');
         }
         const blob = await put(`documents/${businessId}/${filename}`, file.buffer, {
           access: 'private',
-          token,
+          ...auth,
           addRandomSuffix: false,
           contentType: file.mimetype || 'application/octet-stream',
         });
@@ -814,7 +818,7 @@ export class DocumentsService {
           select: { id: true },
         });
         if (!saved) {
-          if (blobPath && token) await del(blobPath, { token });
+          if (blobPath) await del(blobPath, auth);
           else await unlink(fileUrl);
         }
       } catch (cleanupError) {
