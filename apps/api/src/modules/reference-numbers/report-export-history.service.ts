@@ -33,6 +33,9 @@ export class ReportExportHistoryService {
               }),
         },
 
+        include: {
+          user: { select: { name: true, email: true } },
+        },
         orderBy: {
           createdAt: 'desc',
         },
@@ -100,6 +103,9 @@ export class ReportExportHistoryService {
 
             createdAt:
               record.createdAt,
+
+            exportedByName:
+              record.user?.name?.trim() || record.user?.email?.trim() || 'Unknown user',
           };
         }),
     };
