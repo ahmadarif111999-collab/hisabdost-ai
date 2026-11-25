@@ -2,10 +2,16 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DocumentType, OcrStatus, Prisma } from '@prisma/client';
+import { put, del } from '@vercel/blob';
+import { randomUUID } from 'crypto';
+import { mkdir, writeFile, unlink } from 'fs/promises';
+import { extname, resolve, join } from 'path';
 import { AccountingService } from '../accounting/accounting.service';
 import { BusinessesService } from '../businesses/businesses.service';
 import { OcrService } from '../ocr/ocr.service';
@@ -31,6 +37,8 @@ type ExtractedReceiptJson = {
 
 @Injectable()
 export class DocumentsService {
+  private readonly logger = new Logger(DocumentsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly businesses: BusinessesService,
@@ -68,9 +76,9 @@ export class DocumentsService {
 
     this.assertFile(file);
 
-    return this.prisma.$transaction(async (tx) => {
+    return this.withStoredUpload(businessId, file, (fileUrl) => this.prisma.$transaction(async (tx) => {
       const document = await tx.document.create({
-        data: this.uploadDocumentData(userId, businessId, file, documentType),
+        data: this.uploadDocumentData(userId, businessId, file, documentType, fileUrl),
         include: { ocrJobs: true },
       });
       const documentNo = await this.createDocumentReference(tx, document);
@@ -91,7 +99,7 @@ export class DocumentsService {
         },
       });
       return { ...document, documentNo };
-    });
+    }));
   }
 
   async attachUploadToExpense(
@@ -123,7 +131,7 @@ export class DocumentsService {
     const linkedEntityType =
       expense.kind === 'purchase' ? 'purchase' : 'expense';
 
-    const document = await this.prisma.$transaction(async (tx) => {
+    const document = await this.withStoredUpload(businessId, file, (fileUrl) => this.prisma.$transaction(async (tx) => {
       const created = await tx.document.create({
         data: {
           ...this.uploadDocumentData(
@@ -131,6 +139,7 @@ export class DocumentsService {
             businessId,
             file,
             documentType,
+            fileUrl,
           ),
           linkedEntityType,
           linkedEntityId: expense.id,
@@ -177,7 +186,7 @@ export class DocumentsService {
       });
 
       return { ...created, documentNo };
-    });
+    }));
 
     let ocrResult: unknown = null;
     let ocrError: string | null = null;
@@ -754,21 +763,87 @@ export class DocumentsService {
     return expense;
   }
 
+  // Keep the original bytes private and durable before creating a database record.
+  // On local development without Blob credentials, retain filesystem storage.
+  private async withStoredUpload<T>(
+    businessId: string,
+    file: Express.Multer.File,
+    persist: (fileUrl: string) => Promise<T>,
+  ): Promise<T> {
+    const token = this.config.get<string>('BLOB_READ_WRITE_TOKEN');
+    const useBlob = process.env.VERCEL === '1' || Boolean(token);
+    const extension = extname(file.originalname).toLowerCase();
+    const safeExtension = /^\.[a-z0-9]{1,10}$/.test(extension) ? extension : '';
+    const filename = `${randomUUID()}${safeExtension}`;
+    let fileUrl: string;
+    let blobPath: string | undefined;
+
+    try {
+      if (useBlob) {
+        if (!token) {
+          throw new Error('Private Blob credential is not configured');
+        }
+        const blob = await put(`documents/${businessId}/${filename}`, file.buffer, {
+          access: 'private',
+          token,
+          addRandomSuffix: false,
+          contentType: file.mimetype || 'application/octet-stream',
+        });
+        blobPath = blob.pathname;
+        fileUrl = `blob-private://${blob.pathname}`;
+      } else {
+        const directory = resolve(this.config.get<string>('UPLOAD_DIR') || 'uploads');
+        await mkdir(directory, { recursive: true });
+        fileUrl = join(directory, filename);
+        await writeFile(fileUrl, file.buffer, { flag: 'wx' });
+      }
+    } catch (error) {
+      this.logUploadFailure('storage', error);
+      throw new ServiceUnavailableException('Document storage is unavailable. Check the API storage configuration.');
+    }
+
+    try {
+      return await persist(fileUrl);
+    } catch (error) {
+      this.logUploadFailure('database', error);
+      // A transaction can fail ambiguously (for example, a lost connection at
+      // commit). Never delete evidence if we cannot check its database record.
+      try {
+        const saved = await this.prisma.document.findFirst({
+          where: { businessId, fileUrl },
+          select: { id: true },
+        });
+        if (!saved) {
+          if (blobPath && token) await del(blobPath, { token });
+          else await unlink(fileUrl);
+        }
+      } catch (cleanupError) {
+        this.logUploadFailure('cleanup', cleanupError);
+      }
+      throw error;
+    }
+  }
+
+  private logUploadFailure(stage: string, error: unknown) {
+    // Avoid logging credentials, file contents, filenames, or SQL parameters.
+    const value = error as { name?: unknown; code?: unknown } | null;
+    const safe = (field: unknown) => typeof field === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(field) ? field : 'unknown';
+    this.logger.error(`Document upload ${stage} failed: ${safe(value?.name)} (${safe(value?.code)})`);
+  }
+
   private uploadDocumentData(
     userId: string,
     businessId: string,
     file: Express.Multer.File,
     documentType: DocumentType,
+    fileUrl: string,
   ) {
     return {
       businessId,
       uploadedById: userId,
       originalFilename: file.originalname,
       fileType: file.mimetype,
-      fileUrl: `/${
-        this.config.get('UPLOAD_DIR') ||
-        'uploads'
-      }/${file.filename}`,
+      fileUrl,
       documentType,
       ocrStatus:
         documentType === 'RECEIPT' ||
@@ -781,9 +856,9 @@ export class DocumentsService {
   private assertFile(
     file?: Express.Multer.File,
   ) {
-    if (!file) {
+    if (!file || !Buffer.isBuffer(file.buffer) || file.buffer.length === 0) {
       throw new BadRequestException(
-        'Select a document to upload.',
+        'Select a non-empty document to upload.',
       );
     }
   }

@@ -2,7 +2,9 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { OcrStatus } from '@prisma/client';
 import { execFile } from 'child_process';
-import { readFile } from 'fs/promises';
+import { readFile, mkdtemp, writeFile, rm } from 'fs/promises';
+import { tmpdir } from 'os';
+import { get } from '@vercel/blob';
 import { extname, isAbsolute, join } from 'path';
 import { promisify } from 'util';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -68,14 +70,33 @@ export class OcrService {
   }
 
   private async extractText(fileUrl: string, mimeType: string, provider: string) {
-    const localPath = this.resolveLocalPath(fileUrl);
     const lowerProvider = provider.toLowerCase();
+    if (fileUrl.startsWith('blob-private://')) {
+      const pathname = fileUrl.slice('blob-private://'.length);
+      const isText = mimeType.startsWith('text/') || ['.txt', '.csv'].includes(extname(pathname).toLowerCase());
+      if (isText || lowerProvider === 'google-vision' || lowerProvider === 'tesseract') {
+        const bytes = await this.readPrivateBlob(pathname);
+        if (isText) return bytes.toString('utf8');
+        if (lowerProvider === 'google-vision') return this.extractWithGoogleVision(bytes);
+        // Tesseract needs a file path; use an isolated temporary directory only
+        // for processing. The permanent original stays in the private store.
+        const directory = await mkdtemp(join(tmpdir(), 'hisabdost-ocr-'));
+        try {
+          const temporaryFile = join(directory, 'receipt' + extname(pathname));
+          await writeFile(temporaryFile, bytes);
+          return await this.extractWithTesseract(temporaryFile);
+        } finally {
+          await rm(directory, { recursive: true, force: true });
+        }
+      }
+    }
+    const localPath = this.resolveLocalPath(fileUrl);
 
     if (mimeType.startsWith('text/') || ['.txt', '.csv'].includes(extname(localPath).toLowerCase())) {
       return readFile(localPath, 'utf8');
     }
 
-    if (lowerProvider === 'google-vision') return this.extractWithGoogleVision(localPath);
+    if (lowerProvider === 'google-vision') return this.extractWithGoogleVision(await readFile(localPath));
     if (lowerProvider === 'tesseract') return this.extractWithTesseract(localPath);
 
     return [
@@ -100,11 +121,36 @@ export class OcrService {
     return stdout;
   }
 
-  private async extractWithGoogleVision(localPath: string) {
+  private async readPrivateBlob(pathname: string): Promise<Buffer> {
+    const token = this.config.get<string>('BLOB_READ_WRITE_TOKEN');
+    if (!token) throw new Error('Private document storage credential is missing');
+    try {
+      if (!/^documents\/[a-zA-Z0-9_-]+\/[a-f0-9-]+(?:\.[a-z0-9]{1,10})?$/.test(pathname)) {
+        throw new Error('Invalid private document pathname');
+      }
+      const result = await get(pathname, { access: 'private', token });
+      if (!result || result.statusCode !== 200 || !result.stream) throw new Error('Stored document not found');
+      const reader = result.stream.getReader();
+      const chunks: Buffer[] = [];
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(Buffer.from(value));
+        }
+      } finally {
+        reader.releaseLock();
+      }
+      return Buffer.concat(chunks);
+    } catch {
+      throw new Error('Could not read original document from private storage');
+    }
+  }
+
+  private async extractWithGoogleVision(bytes: Buffer) {
     const apiKey = this.config.get<string>('GOOGLE_VISION_API_KEY');
     if (!apiKey) throw new Error('GOOGLE_VISION_API_KEY is missing');
 
-    const bytes = await readFile(localPath);
     const res = await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
