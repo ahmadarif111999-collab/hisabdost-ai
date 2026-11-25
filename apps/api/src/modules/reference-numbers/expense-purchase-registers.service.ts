@@ -1115,8 +1115,8 @@ export class ExpensePurchaseRegistersService {
       | undefined,
   ) {
     return (
-      person?.name ||
-      person?.email ||
+      person?.name?.trim() ||
+      person?.email?.trim() ||
       ''
     );
   }

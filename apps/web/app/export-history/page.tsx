@@ -42,6 +42,8 @@ type ExportHistoryRow = {
   filename: string;
 
   createdAt: string;
+
+  exportedByName?: string;
 };
 
 type ExportHistoryResponse = {
@@ -421,6 +423,7 @@ export default function ExportHistoryPage() {
                       <th className="border-b border-slate-200 px-3 py-3">
                         Generated
                       </th>
+                      <th className="border-b border-slate-200 px-3 py-3">Exported by</th>
                     </tr>
                   </thead>
 
@@ -476,6 +479,9 @@ export default function ExportHistoryPage() {
                               record.createdAt,
                               true,
                             )}
+                          </td>
+                          <td className="border-b border-slate-100 px-3 py-4 text-slate-600">
+                            {record.exportedByName || 'Unknown user'}
                           </td>
                         </tr>
                       ),

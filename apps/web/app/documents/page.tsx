@@ -42,7 +42,7 @@ type ManualResolutionJson = {
   resolutionType?: string;
   note?: string;
   resolvedAt?: string;
-  resolvedById?: string;
+  resolvedByName?: string;
 };
 
 type OcrJob = {
@@ -60,6 +60,8 @@ type Document = {
   originalFilename: string;
   documentNo?: string;
   referenceNo?: string;
+  uploadedByName?: string;
+  resolvedByName?: string;
   linkedReferenceNo?: string | null;
   linkedJournalReferenceNo?: string | null;
   documentType: string;
@@ -1133,6 +1135,7 @@ export default function DocumentsPage() {
                         )}
                       />
 
+                      <Info label="Resolved by" value={active.resolvedByName || manualResolution.resolvedByName || 'Unknown user'} />
                       <Info label="Journal reference" value={active.linkedJournalReferenceNo || '-'} />
                       <Info
                         label="Linked record"
@@ -1184,6 +1187,7 @@ export default function DocumentsPage() {
 
                     <div className="mt-4 grid gap-3 sm:grid-cols-2">
                       <Info label="Document reference" value={active.documentNo || active.referenceNo || 'DOC pending'} />
+                      <Info label="Uploaded by" value={active.uploadedByName || 'Unknown user'} />
                       <Info label="Journal reference" value={active.linkedJournalReferenceNo || '-'} />
                     </div>
 

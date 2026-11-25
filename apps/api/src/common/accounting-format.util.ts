@@ -91,9 +91,9 @@ export function cleanAccountingNarration(narration?: string | null, sourceType?:
 }
 
 export function displayUserName(user?: { name?: string | null; email?: string | null } | null) {
-  if (!user) return 'System';
+  if (!user) return 'Unknown user';
 
-  return user.name || user.email || 'System';
+  return user.name?.trim() || user.email?.trim() || 'Unknown user';
 }
 
 export function normalBalanceLabel(accountType: string, signedBalance: number) {

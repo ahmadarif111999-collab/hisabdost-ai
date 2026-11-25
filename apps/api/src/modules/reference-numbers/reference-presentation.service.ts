@@ -322,6 +322,7 @@ export class ReferencePresentationService {
         document.uploadedById,
         document.createdById,
         document.resolvedById,
+        this.jsonObject(document.manualJson).resolvedById,
         document.approvedById,
       ]),
     );
@@ -345,9 +346,11 @@ export class ReferencePresentationService {
       const uploadedBy =
         this.cleanPerson(document.uploadedBy) ||
         this.cleanPerson(users.get(document.uploadedById));
+      const manualResolution = this.jsonObject(document.manualJson);
+      const resolverId = document.resolvedById || manualResolution.resolvedById;
       const resolvedBy =
         this.cleanPerson(document.resolvedBy) ||
-        this.cleanPerson(users.get(document.resolvedById));
+        this.cleanPerson(users.get(resolverId));
 
       const originalFilename =
         document.originalFilename || document.filename || 'Document';
@@ -368,9 +371,14 @@ export class ReferencePresentationService {
         document.filename = document.displayFilename;
       }
       document.uploadedBy = uploadedBy;
-      document.uploadedByName = this.personLabel(uploadedBy);
+      document.uploadedByName = this.personLabel(uploadedBy) || 'Unknown user';
       document.resolvedBy = resolvedBy;
-      document.resolvedByName = this.personLabel(resolvedBy);
+      document.resolvedByName = this.personLabel(resolvedBy) ||
+        (resolverId || document.isManualResolution ? 'Unknown user' : '');
+      if (document.isManualResolution && document.manualJson) {
+        const { resolvedById: _internalResolverId, ...publicResolution } = manualResolution;
+        document.manualJson = { ...publicResolution, resolvedByName: document.resolvedByName };
+      }
       document.linkedReferenceNo = linkedReferenceNo;
       document.linkedJournalReferenceNo = linkedJournal
         ? journalReferences[linkedJournal.id]
@@ -603,11 +611,7 @@ export class ReferencePresentationService {
       where: { businessId },
     });
     const users = await this.loadUsers(
-      expenses.flatMap((expense) => [
-        expense.createdById,
-        expense.approvedById,
-        expense.updatedById,
-      ]),
+      entries.flatMap((entry) => [entry.createdById, entry.approvedById]),
     );
     const entityReferences = await this.references.ensureMany(
       businessId,
@@ -646,8 +650,8 @@ export class ReferencePresentationService {
       const document = linkedDocuments.get(expense.id);
       const vendorId = expense.vendorId || expense.supplierId;
       const accountId = expense.expenseAccountId || expense.accountId;
-      const createdBy = this.cleanPerson(users.get(expense.createdById));
-      const approvedBy = this.cleanPerson(users.get(expense.approvedById));
+      const createdBy = this.cleanPerson(users.get(entry.createdById));
+      const approvedBy = this.cleanPerson(users.get(entry.approvedById));
       const documentStatus = document
         ? document.status || 'Attached'
         : expense.documentStatus || 'Missing';
@@ -684,7 +688,7 @@ export class ReferencePresentationService {
           ? documentReferences[document.id] || 'Not assigned'
           : 'Missing',
         'Created By': this.personLabel(createdBy) || 'Unknown user',
-        'Approved By': this.personLabel(approvedBy) || 'Not approved',
+        'Approved By': this.personLabel(approvedBy) || (entry.approvedById ? 'Unknown user' : 'Not approved'),
         Status: expense.status || entry.status || 'Posted',
       };
     });
@@ -890,6 +894,7 @@ export class ReferencePresentationService {
       ? await (this.prisma as any).journalEntry.findMany({
           where: {
             businessId,
+            sourceType: { in: ['customer_payment', 'supplier_payment', 'payment'] },
             sourceId: { in: payments.map((payment) => payment.id) },
           },
         })
@@ -909,14 +914,11 @@ export class ReferencePresentationService {
     const vendors = await this.loadBusinessNames('vendor', businessId);
     const accounts = await this.loadBusinessNames('account', businessId);
     const users = await this.loadUsers(
-      payments.flatMap((payment) => [
-        payment.createdById,
-        payment.approvedById,
-      ]),
+      entries.flatMap((entry) => [entry.createdById]),
     );
     const rows = payments.map((payment) => {
       const journal = journalBySource.get(payment.id);
-      const createdBy = this.cleanPerson(users.get(payment.createdById));
+      const createdBy = this.cleanPerson(users.get(journal?.createdById));
       const party =
         customers.get(payment.customerId) ||
         vendors.get(payment.vendorId || payment.supplierId) ||
@@ -1099,6 +1101,7 @@ export class ReferencePresentationService {
 
     const users: AnyRecord[] = await (this.prisma as any).user.findMany({
       where: { id: { in: cleanIds } },
+      select: { id: true, name: true, email: true },
     });
     return new Map(users.map((user) => [user.id, user]));
   }
@@ -1303,8 +1306,8 @@ export class ReferencePresentationService {
   private cleanPerson(value: AnyRecord | null | undefined) {
     if (!value) return null;
     return {
-      name: value.name || null,
-      email: value.email || null,
+      name: typeof value.name === 'string' ? value.name.trim() || null : null,
+      email: typeof value.email === 'string' ? value.email.trim() || null : null,
     };
   }
 
