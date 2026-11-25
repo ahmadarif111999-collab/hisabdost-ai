@@ -58,6 +58,10 @@ type OcrJob = {
 type Document = {
   id: string;
   originalFilename: string;
+  documentNo?: string;
+  referenceNo?: string;
+  linkedReferenceNo?: string | null;
+  linkedJournalReferenceNo?: string | null;
   documentType: string;
   fileType?: string | null;
   fileUrl?: string;
@@ -507,7 +511,7 @@ export default function DocumentsPage() {
         file,
       );
 
-      await api(
+      const result = await api<{ documentNo?: string; document?: Document; message?: string; ocrError?: string }>(
         `/documents/businesses/${businessId}/upload?documentType=RECEIPT&process=true`,
         {
           method: 'POST',
@@ -516,7 +520,7 @@ export default function DocumentsPage() {
       );
 
       setMessage(
-        'Receipt uploaded. OCR/AI tried to read it, but you can manually correct the fields before posting.',
+        result.message || `${result.documentNo || result.document?.documentNo || 'Receipt'} uploaded. Review OCR and correct fields before posting.`,
       );
 
       setFile(null);
@@ -797,7 +801,7 @@ export default function DocumentsPage() {
     setError('');
 
     try {
-      await api(
+      const result = await api<{ message?: string }>(
         `/documents/businesses/${businessId}/${document.id}/approve-as-expense`,
         {
           method: 'POST',
@@ -814,10 +818,9 @@ export default function DocumentsPage() {
       );
 
       setMessage(
-        manual.kind ===
-          'purchase'
+        result.message || (manual.kind === 'purchase'
           ? 'Receipt approved and purchase recorded.'
-          : 'Receipt approved and expense recorded.',
+          : 'Receipt approved and expense recorded.'),
       );
 
       setManual(emptyManual);
@@ -1058,7 +1061,7 @@ export default function DocumentsPage() {
                         >
                           <p className="font-semibold text-slate-900">
                             {resolution
-                              ? 'Manual document resolution'
+                              ? `${document.documentNo || document.referenceNo || 'DOC pending'} — Manual document resolution`
                               : document.originalFilename}
                           </p>
 
@@ -1067,7 +1070,7 @@ export default function DocumentsPage() {
                               ? 'Resolved without attachment'
                               : `${document.documentType} — OCR: ${document.ocrStatus}`}
                             {document.linkedEntityType
-                              ? ' — linked'
+                              ? ` — linked: ${document.linkedReferenceNo || document.linkedEntityType}`
                               : ''}
                           </p>
                         </button>
@@ -1094,8 +1097,7 @@ export default function DocumentsPage() {
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
                       <h2 className="text-xl font-bold text-slate-900">
-                        Missing-document
-                        resolution
+                        {active.documentNo || active.referenceNo || 'DOC pending'} — Missing-document resolution
                       </h2>
 
                       <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold uppercase text-emerald-700">
@@ -1131,10 +1133,11 @@ export default function DocumentsPage() {
                         )}
                       />
 
+                      <Info label="Journal reference" value={active.linkedJournalReferenceNo || '-'} />
                       <Info
                         label="Linked record"
                         value={
-                          active.linkedEntityType ||
+                          active.linkedReferenceNo || active.linkedEntityType ||
                           '-'
                         }
                       />
@@ -1156,7 +1159,7 @@ export default function DocumentsPage() {
                             active.ocrStatus
                           }
                           {active.linkedEntityType
-                            ? ` • Linked to ${active.linkedEntityType}`
+                            ? ` • Linked to ${active.linkedReferenceNo || active.linkedEntityType}`
                             : ''}
                         </p>
                       </div>
@@ -1177,6 +1180,11 @@ export default function DocumentsPage() {
                           Re-run OCR
                         </button>
                       )}
+                    </div>
+
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      <Info label="Document reference" value={active.documentNo || active.referenceNo || 'DOC pending'} />
+                      <Info label="Journal reference" value={active.linkedJournalReferenceNo || '-'} />
                     </div>
 
                     {latest?.errorMessage && (

@@ -251,28 +251,40 @@ export class ReferencePresentationService {
     const linkedIds = documents
       .map((document) => this.linkedAccountingId(document))
       .filter((id): id is string => Boolean(id));
-    const expenses = linkedIds.length
-      ? await (this.prisma as any).expense.findMany({
+    const expenses = await this.prisma.expense.findMany({
+      where: {
+        businessId,
+        OR: [
+          { id: { in: Array.from(new Set(linkedIds)) } },
+          { documentId: { in: documents.map((document) => document.id) } },
+        ],
+      },
+      orderBy: [{ expenseDate: 'asc' }, { id: 'asc' }],
+    });
+    const expenseMap = new Map(expenses.map((expense) => [expense.id, expense]));
+    const expenseByDocument = new Map<string, (typeof expenses)[number]>();
+    for (const expense of expenses) {
+      if (expense.documentId && !expenseByDocument.has(expense.documentId)) {
+        expenseByDocument.set(expense.documentId, expense);
+      }
+    }
+    const journalEntries = expenses.length
+      ? await this.prisma.journalEntry.findMany({
           where: {
             businessId,
-            id: { in: Array.from(new Set(linkedIds)) },
+            sourceType: { in: ['expense', 'purchase'] },
+            sourceId: { in: expenses.map((expense) => expense.id) },
           },
+          orderBy: [{ entryDate: 'asc' }, { id: 'asc' }],
         })
       : [];
-    const expenseMap = new Map<string, AnyRecord>(
-      expenses.map((expense: AnyRecord) => [expense.id, expense]),
-    );
-    const journalEntries = linkedIds.length
-      ? await (this.prisma as any).journalEntry.findMany({
-          where: {
-            businessId,
-            sourceId: { in: Array.from(new Set(linkedIds)) },
-          },
-        })
-      : [];
-    const journalBySource = new Map<string, AnyRecord>(
-      journalEntries.map((entry: AnyRecord) => [entry.sourceId, entry]),
-    );
+    const journalBySource = new Map<string, AnyRecord>();
+    for (const entry of journalEntries) {
+      if (entry.sourceId) {
+        const key = `${entry.sourceType}:${entry.sourceId}`;
+        if (!journalBySource.has(key)) journalBySource.set(key, entry);
+      }
+    }
     const journalReferences = await this.references.ensureMany(
       businessId,
       'journal',
@@ -286,9 +298,7 @@ export class ReferencePresentationService {
       'expense',
       expenses
         .filter((expense: AnyRecord) =>
-          this.sourceTypeForExpense(expense, journalBySource).includes(
-            'expense',
-          ),
+          expense.kind === 'expense',
         )
         .map((expense: AnyRecord) => ({
           id: expense.id,
@@ -300,9 +310,7 @@ export class ReferencePresentationService {
       'purchase',
       expenses
         .filter((expense: AnyRecord) =>
-          this.sourceTypeForExpense(expense, journalBySource).includes(
-            'purchase',
-          ),
+          expense.kind === 'purchase',
         )
         .map((expense: AnyRecord) => ({
           id: expense.id,
@@ -320,13 +328,20 @@ export class ReferencePresentationService {
 
     for (const document of documents) {
       const linkedId = this.linkedAccountingId(document);
-      const linkedExpense = linkedId ? expenseMap.get(linkedId) : undefined;
-      const linkedJournal = linkedId
-        ? journalBySource.get(linkedId)
+      const linkedExpense = expenseByDocument.get(document.id) ||
+        (linkedId ? expenseMap.get(linkedId) : undefined);
+      const linkedJournal = linkedExpense
+        ? journalBySource.get(`${linkedExpense.kind}:${linkedExpense.id}`)
         : undefined;
-      const linkedReferenceNo = linkedId
-        ? purchaseReferences[linkedId] || expenseReferences[linkedId] || null
+      const linkedReferenceNo = linkedExpense
+        ? (linkedExpense.kind === 'purchase'
+          ? purchaseReferences[linkedExpense.id]
+          : expenseReferences[linkedExpense.id]) || null
         : null;
+      if (linkedExpense) {
+        document.linkedEntityType = linkedExpense.kind;
+        document.linkedEntityId = linkedExpense.id;
+      }
       const uploadedBy =
         this.cleanPerson(document.uploadedBy) ||
         this.cleanPerson(users.get(document.uploadedById));
@@ -340,7 +355,13 @@ export class ReferencePresentationService {
       document.documentNo = documentNo;
       document.referenceNo = documentNo;
       document.displayNumber = documentNo;
-      document.displayFilename = `${documentNo} — ${originalFilename}`;
+      document.displayFilename = originalFilename.startsWith(`${documentNo} — `)
+        ? originalFilename : `${documentNo} — ${originalFilename}`;
+      document.isManualResolution =
+        document.fileType === 'application/x-hisabdost-manual-resolution';
+      document.receiptAttached = !document.isManualResolution && Boolean(linkedExpense);
+      document.documentStatus = document.isManualResolution ? 'Resolved manually'
+        : linkedExpense ? 'Attached' : 'Uploaded — not linked';
       if (document.originalFilename) {
         document.originalFilename = document.displayFilename;
       } else if (document.filename) {
@@ -1147,18 +1168,6 @@ export class ReferencePresentationService {
       document.purchase?.id ||
       null
     );
-  }
-
-  private sourceTypeForExpense(
-    expense: AnyRecord,
-    journalBySource: Map<string, AnyRecord>,
-  ) {
-    return String(
-      journalBySource.get(expense.id)?.sourceType ||
-        expense.type ||
-        expense.expenseType ||
-        'expense',
-    ).toLowerCase();
   }
 
   private appendReferenceToMessages(

@@ -32,6 +32,7 @@ export class ReferenceNumbersService {
     businessId: string,
     entityType: string,
     referenceDate: Date | string = new Date(),
+    tx: Prisma.TransactionClient = this.prisma,
   ) {
     const date =
       this.validDate(
@@ -49,7 +50,7 @@ export class ReferenceNumbersService {
       );
 
     const sequence =
-      await this.prisma.businessReferenceSequence.upsert({
+      await tx.businessReferenceSequence.upsert({
         where: {
           businessId_entityType_year: {
             businessId,

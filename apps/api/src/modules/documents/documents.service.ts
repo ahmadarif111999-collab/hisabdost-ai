@@ -5,11 +5,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { DocumentType, OcrStatus } from '@prisma/client';
+import { DocumentType, OcrStatus, Prisma } from '@prisma/client';
 import { AccountingService } from '../accounting/accounting.service';
 import { BusinessesService } from '../businesses/businesses.service';
 import { OcrService } from '../ocr/ocr.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ReferenceNumbersService } from '../reference-numbers/reference-numbers.service';
 import {
   ApproveReceiptDto,
   ManualReceiptDto,
@@ -36,6 +37,7 @@ export class DocumentsService {
     private readonly config: ConfigService,
     private readonly ocr: OcrService,
     private readonly accounting: AccountingService,
+    private readonly references: ReferenceNumbersService,
   ) {}
 
   async list(userId: string, businessId: string) {
@@ -66,33 +68,30 @@ export class DocumentsService {
 
     this.assertFile(file);
 
-    const document = await this.prisma.document.create({
-      data: this.uploadDocumentData(
-        userId,
-        businessId,
-        file,
-        documentType,
-      ),
-      include: { ocrJobs: true },
-    });
-
-    await this.prisma.auditLog.create({
-      data: {
-        organizationId: business.organizationId,
-        businessId,
-        userId,
-        action: 'DOCUMENT_UPLOADED',
-        entityType: 'Document',
-        entityId: document.id,
-        afterJson: {
-          originalFilename: document.originalFilename,
-          documentType: document.documentType,
-          ocrStatus: document.ocrStatus,
+    return this.prisma.$transaction(async (tx) => {
+      const document = await tx.document.create({
+        data: this.uploadDocumentData(userId, businessId, file, documentType),
+        include: { ocrJobs: true },
+      });
+      const documentNo = await this.createDocumentReference(tx, document);
+      await tx.auditLog.create({
+        data: {
+          organizationId: business.organizationId,
+          businessId,
+          userId,
+          action: 'DOCUMENT_UPLOADED',
+          entityType: 'Document',
+          entityId: document.id,
+          afterJson: {
+            documentReference: documentNo,
+            originalFilename: document.originalFilename,
+            documentType: document.documentType,
+            ocrStatus: document.ocrStatus,
+          },
         },
-      },
+      });
+      return { ...document, documentNo };
     });
-
-    return document;
   }
 
   async attachUploadToExpense(
@@ -156,6 +155,7 @@ export class DocumentsService {
         );
       }
 
+      const documentNo = await this.createDocumentReference(tx, created);
       await tx.auditLog.create({
         data: {
           organizationId: business.organizationId,
@@ -169,13 +169,14 @@ export class DocumentsService {
           },
           afterJson: {
             documentId: created.id,
+            documentReference: documentNo,
             originalFilename: created.originalFilename,
             resolutionType: 'uploaded_document',
           },
         },
       });
 
-      return created;
+      return { ...created, documentNo };
     });
 
     let ocrResult: unknown = null;
@@ -198,8 +199,9 @@ export class DocumentsService {
 
     return {
       message: ocrError
-        ? 'Document attached and the missing-document issue was resolved, but OCR could not be completed.'
-        : 'Document attached and the missing-document issue was resolved.',
+        ? `${document.documentNo} attached; OCR could not be completed.`
+        : `${document.documentNo} attached and the missing-document issue was resolved.`,
+      documentNo: document.documentNo,
       document,
       expenseId: expense.id,
       ocrResult,
@@ -240,6 +242,10 @@ export class DocumentsService {
       throw new NotFoundException('Document not found');
     }
 
+    if (this.isManualResolutionDocument(document)) {
+      throw new BadRequestException('A manual resolution is not an uploaded receipt.');
+    }
+
     if (document.linkedEntityId) {
       throw new BadRequestException(
         'This document is already linked to another accounting record.',
@@ -249,6 +255,9 @@ export class DocumentsService {
     const linkedEntityType =
       expense.kind === 'purchase' ? 'purchase' : 'expense';
 
+    const documentNo = await this.references.attachReference(
+      businessId, 'document', document.id, document.createdAt,
+    );
     const result = await this.prisma.$transaction(async (tx) => {
       const linkedExpense = await tx.expense.updateMany({
         where: {
@@ -298,6 +307,7 @@ export class DocumentsService {
           },
           afterJson: {
             documentId: document.id,
+            documentReference: documentNo,
             originalFilename: document.originalFilename,
             resolutionType: 'existing_document',
           },
@@ -317,7 +327,8 @@ export class DocumentsService {
 
     return {
       message:
-        'Existing document linked and the missing-document issue was resolved.',
+        `${documentNo} linked and the missing-document issue was resolved.`,
+      documentNo,
       document: result,
       expenseId: expense.id,
     };
@@ -406,6 +417,7 @@ export class DocumentsService {
         );
       }
 
+      const documentNo = await this.createDocumentReference(tx, resolutionRecord);
       await tx.auditLog.create({
         data: {
           organizationId: business.organizationId,
@@ -420,6 +432,7 @@ export class DocumentsService {
           },
           afterJson: {
             documentId: resolutionRecord.id,
+            documentReference: documentNo,
             resolutionType: 'manual_without_attachment',
             note: resolutionNote,
             resolvedAt: resolvedAt.toISOString(),
@@ -427,12 +440,13 @@ export class DocumentsService {
         },
       });
 
-      return resolutionRecord;
+      return { ...resolutionRecord, documentNo };
     });
 
     return {
       message:
-        'Missing-document issue marked resolved with an audit note.',
+        `${document.documentNo}: missing-document issue resolved with an audit note. No receipt attached.`,
+      documentNo: document.documentNo,
       document,
       expenseId: expense.id,
     };
@@ -455,6 +469,9 @@ export class DocumentsService {
       );
     }
 
+    await this.references.attachReference(
+      businessId, 'document', document.id, document.createdAt,
+    );
     return this.ocr.processDocument(documentId);
   }
 
@@ -541,6 +558,9 @@ export class DocumentsService {
       );
     }
 
+    const documentNo = await this.references.attachReference(
+      businessId, 'document', document.id, document.createdAt,
+    );
     const latest = await this.ocr.getLatestJob(documentId);
 
     const extracted = (
@@ -629,7 +649,7 @@ export class DocumentsService {
         ? result.purchase.id
         : result.expense.id;
 
-    await this.prisma.$transaction([
+    const [updatedDocument] = await this.prisma.$transaction([
       this.prisma.document.update({
         where: { id: document.id },
         data: {
@@ -650,6 +670,7 @@ export class DocumentsService {
           entityType: 'Document',
           entityId: document.id,
           afterJson: {
+            documentReference: documentNo,
             linkedEntityType,
             linkedEntityId,
             amount,
@@ -660,11 +681,29 @@ export class DocumentsService {
 
     return {
       ...result,
-      message:
-        dto.kind === 'purchase'
-          ? 'Receipt approved and purchase recorded'
-          : 'Receipt approved and expense recorded',
+      document: updatedDocument,
+      documentNo,
+      message: `${documentNo} approved and ${linkedEntityType} recorded`,
     };
+  }
+
+  private async createDocumentReference(
+    tx: Prisma.TransactionClient,
+    document: { id: string; businessId: string; createdAt: Date },
+  ) {
+    const referenceNo = await this.references.nextReferenceNo(
+      document.businessId, 'document', document.createdAt, tx,
+    );
+    await tx.businessReference.create({
+      data: {
+        businessId: document.businessId,
+        entityType: 'document',
+        entityId: document.id,
+        referenceNo,
+        referenceDate: document.createdAt,
+      },
+    });
+    return referenceNo;
   }
 
   private async ensureAccessibleDocument(
