@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AppShell } from '@/components/AppShell';
 import { ClientRequired } from '@/components/ClientRequired';
 import { Card, Input } from '@/components/Card';
@@ -54,35 +54,72 @@ export default function JournalsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  async function load() {
-    const businessId = getBusinessId();
+  const requestVersion = useRef(0);
+  const dateFilter = useRef({ from, to });
+  dateFilter.current = { from, to };
+  const [linkedReference, setLinkedReference] = useState('');
 
-    if (!businessId) return;
+  function clearReferenceLink() {
+    const url = new URL(window.location.href);
+    if (url.searchParams.has('reference')) {
+      url.searchParams.delete('reference');
+      window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
+    }
+  }
+
+  async function load(reference?: string) {
+    const version = ++requestVersion.current;
+    const businessId = getBusinessId();
+    setRows([]);
+    setSelected(null);
+    setLinkedReference(reference || '');
+    setError('');
+    if (!businessId) {
+      setLoading(false);
+      return;
+    }
 
     setLoading(true);
-    setError('');
-
     try {
       const params = new URLSearchParams();
-
-      if (from) params.set('from', from);
-      if (to) params.set('to', to);
-
+      if (reference) {
+        params.set('reference', reference);
+      } else {
+        if (dateFilter.current.from) params.set('from', dateFilter.current.from);
+        if (dateFilter.current.to) params.set('to', dateFilter.current.to);
+      }
       const data = await api<{ rows: JournalEntry[] }>(
         `/accounting/businesses/${businessId}/views/journal-entries?${params.toString()}`,
       );
-
-      setRows(data.rows || []);
-      setSelected(null);
+      if (version !== requestVersion.current || getBusinessId() !== businessId) return;
+      const entries = data.rows || [];
+      setRows(entries);
+      if (reference) {
+        const linked = entries.find((entry) => entry.entryNo === reference);
+        setSelected(linked || null);
+        if (!linked) setError('The linked journal entry was not found for the selected client.');
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not load journal entries');
+      if (version === requestVersion.current && getBusinessId() === businessId) {
+        setError(err instanceof Error ? err.message : 'Could not load journal entries');
+      }
     } finally {
-      setLoading(false);
+      if (version === requestVersion.current) setLoading(false);
     }
   }
 
   useEffect(() => {
-    load();
+    const reference = new URLSearchParams(window.location.search).get('reference')?.trim().toUpperCase();
+    void load(reference || undefined);
+    const onBusinessChanged = () => {
+      clearReferenceLink();
+      void load();
+    };
+    window.addEventListener('pakbooks-business-changed', onBusinessChanged);
+    return () => {
+      requestVersion.current++;
+      window.removeEventListener('pakbooks-business-changed', onBusinessChanged);
+    };
   }, []);
 
   return (
@@ -118,7 +155,7 @@ export default function JournalsPage() {
 
               <button
                 type="button"
-                onClick={load}
+                onClick={() => { clearReferenceLink(); void load(); }}
                 disabled={loading}
                 className="rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
@@ -138,7 +175,10 @@ export default function JournalsPage() {
               <div className="mb-4 flex items-center justify-between gap-3">
                 <div>
                   <h2 className="text-xl font-bold text-slate-900">Posted entries</h2>
-                  <p className="text-sm text-slate-500">{rows.length} entries found</p>
+                  <p className="text-sm text-slate-500">
+                    {linkedReference ? `Linked journal: ${linkedReference} · ` : ''}
+                    {rows.length} entries found
+                  </p>
                 </div>
               </div>
 

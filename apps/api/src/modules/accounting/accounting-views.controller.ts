@@ -14,8 +14,9 @@ export class AccountingViewsController {
     @Param('businessId') businessId: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('reference') reference?: string,
   ) {
-    return this.views.journalEntries(user.sub, businessId, { from, to });
+    return this.views.journalEntries(user.sub, businessId, { from, to, reference });
   }
 
   @Get('journal-entries/:entryId')

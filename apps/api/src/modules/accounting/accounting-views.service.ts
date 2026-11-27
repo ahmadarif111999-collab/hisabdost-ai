@@ -37,19 +37,41 @@ export class AccountingViewsService {
   async journalEntries(
     userId: string,
     businessId: string,
-    filter: DateFilter = {},
+    filter: DateFilter & { reference?: string } = {},
   ) {
     await this.businesses.getAccessibleBusiness(
       userId,
       businessId,
     );
 
+    // Exact links from the expense register use a business-scoped permanent JE reference.
+    // Resolve before the normal period query and its 300-entry limit.
+    let linkedJournalId: string | undefined;
+    if (filter.reference !== undefined) {
+      if (typeof filter.reference !== 'string') {
+        throw new BadRequestException('Invalid journal reference');
+      }
+      const referenceNo = filter.reference.trim().toUpperCase();
+      if (!/^JE-\d{4}-\d{6,}$/.test(referenceNo)) {
+        throw new BadRequestException('Invalid journal reference');
+      }
+      const linkedReference = await this.prisma.businessReference.findFirst({
+        where: { businessId, entityType: 'journal', referenceNo },
+        select: { entityId: true },
+      });
+      if (!linkedReference) {
+        return { timezone: 'Asia/Karachi', rows: [] };
+      }
+      linkedJournalId = linkedReference.entityId;
+    }
+
     const entries =
       await this.prisma.journalEntry.findMany({
         where: {
           businessId,
-          ...(filter.from ||
-          filter.to
+          ...(linkedJournalId ? { id: linkedJournalId } : {}),
+          ...(!linkedJournalId && (filter.from ||
+          filter.to)
             ? {
                 entryDate: {
                   ...(filter.from

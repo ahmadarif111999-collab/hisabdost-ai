@@ -4,6 +4,7 @@ import {
   FormEvent,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import { AppShell } from '@/components/AppShell';
@@ -205,7 +206,20 @@ export default function DocumentsPage() {
     Record<string, string>
   >({});
 
+  const requestVersion = useRef(0);
+  const [linkedReference, setLinkedReference] = useState('');
+
+  function clearReferenceLink() {
+    const url = new URL(window.location.href);
+    if (url.searchParams.has('reference')) {
+      url.searchParams.delete('reference');
+      window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
+    }
+    setLinkedReference('');
+  }
+
   async function load() {
+    const version = ++requestVersion.current;
     const params =
       new URLSearchParams(
         window.location.search,
@@ -221,6 +235,10 @@ export default function DocumentsPage() {
     const requestedFirmScope =
       params.get('scope') ===
       'firm';
+    const requestedReference = requestedView === 'documents'
+      ? params.get('reference')?.trim().toUpperCase() || ''
+      : '';
+    setLinkedReference(requestedReference);
 
     const businessId =
       getBusinessId();
@@ -264,6 +282,8 @@ export default function DocumentsPage() {
             ),
           );
 
+        if (version !== requestVersion.current) return;
+
         setMissingItems(
           results
             .flatMap((result) =>
@@ -292,6 +312,7 @@ export default function DocumentsPage() {
 
         return;
       } catch {
+        if (version !== requestVersion.current) return;
         setFirmScope(false);
       }
     }
@@ -323,6 +344,8 @@ export default function DocumentsPage() {
         ),
       ]);
 
+      if (version !== requestVersion.current || getBusinessId() !== businessId) return;
+
       setDocuments(
         documentResult,
       );
@@ -338,43 +361,47 @@ export default function DocumentsPage() {
         })),
       );
 
-      setSelected((current) => {
-        if (!current) {
-          return null;
+      if (requestedReference) {
+        const linked = documentResult.find((document) =>
+          (document.documentNo || document.referenceNo || '').toUpperCase() === requestedReference,
+        ) || null;
+        setSelected(linked);
+        fillManualFrom(linked);
+        if (!linked) {
+          setError('The linked document was not found for the selected client.');
         }
-
-        return (
-          documentResult.find(
-            (document) =>
-              document.id ===
-              current.id,
-          ) || null
-        );
-      });
+      } else {
+        setSelected((current) => {
+          if (!current) return null;
+          return documentResult.find((document) => document.id === current.id) || null;
+        });
+      }
     } catch (loadError) {
+      if (version !== requestVersion.current || getBusinessId() !== businessId) return;
+      if (requestedReference) setSelected(null);
       setError(
         loadError instanceof Error
           ? loadError.message
           : 'Could not load documents.',
       );
     } finally {
-      setLoading(false);
+      if (version === requestVersion.current) setLoading(false);
     }
   }
 
   useEffect(() => {
     void load();
-
-    window.addEventListener(
-      'pakbooks-business-changed',
-      load,
-    );
-
+    const onBusinessChanged = () => {
+      clearReferenceLink();
+      setDocuments([]);
+      setSelected(null);
+      setManual(emptyManual);
+      void load();
+    };
+    window.addEventListener('pakbooks-business-changed', onBusinessChanged);
     return () => {
-      window.removeEventListener(
-        'pakbooks-business-changed',
-        load,
-      );
+      requestVersion.current++;
+      window.removeEventListener('pakbooks-business-changed', onBusinessChanged);
     };
   }, []);
 
@@ -842,7 +869,7 @@ export default function DocumentsPage() {
 
   const active =
     selected ||
-    documents[0] ||
+    (!linkedReference ? documents[0] : null) ||
     null;
 
   const latest =
@@ -1046,6 +1073,8 @@ export default function DocumentsPage() {
                           }
                           type="button"
                           onClick={() => {
+                            clearReferenceLink();
+                            setError('');
                             setSelected(
                               document,
                             );
