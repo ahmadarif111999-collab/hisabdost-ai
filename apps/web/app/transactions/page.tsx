@@ -500,8 +500,8 @@ export default function TransactionsPage() {
               {referenceNo && (
                 <p className="mt-2 font-mono text-base font-bold text-emerald-900">
                   Reference:{' '}
-                  {/^(EXP|PUR|JE)-\d{4}-\d{6,}$/.test(referenceNo) ? (
-                    <Link className="underline" href={`${referenceNo.startsWith('EXP-') ? '/expenses' : referenceNo.startsWith('PUR-') ? '/purchases' : '/journals'}?reference=${encodeURIComponent(referenceNo)}`}>{referenceNo}</Link>
+                  {/^(EXP|PUR|JE|REC|PAY)-\d{4}-\d{6,}$/.test(referenceNo) ? (
+                    <Link className="underline" href={`${referenceNo.startsWith('EXP-') ? '/expenses' : referenceNo.startsWith('PUR-') ? '/purchases' : referenceNo.startsWith('JE-') ? '/journals' : '/cash-bank'}?reference=${encodeURIComponent(referenceNo)}`}>{referenceNo}</Link>
                   ) : referenceNo}
                 </p>
               )}

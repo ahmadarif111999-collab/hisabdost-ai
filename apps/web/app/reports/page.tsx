@@ -301,9 +301,9 @@ function normalizeColumn(
 
 function referenceHref(value: unknown) {
   const reference = String(value || '').trim().toUpperCase();
-  const match = /^(JE|DOC|EXP|PUR)-\d{4}-\d{6,}$/.exec(reference);
+  const match = /^(JE|DOC|EXP|PUR|REC|PAY|RPT|EX)-\d{4}-\d{6,}$/.exec(reference);
   if (!match) return null;
-  const routes: Record<string, string> = { JE: '/journals', DOC: '/documents', EXP: '/expenses', PUR: '/purchases' };
+  const routes: Record<string, string> = { JE: '/journals', DOC: '/documents', EXP: '/expenses', PUR: '/purchases', REC: '/cash-bank', PAY: '/cash-bank', RPT: '/report-requests', EX: '/export-history' };
   return `${routes[match[1]]}?reference=${encodeURIComponent(reference)}`;
 }
 

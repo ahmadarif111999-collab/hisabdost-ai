@@ -268,8 +268,8 @@ export default function JournalsPage() {
                       Created by {selected.createdBy} • Status {selected.status}
                     </p>
                     {linkedSource?.entryNo === selected.entryNo && linkedSource.businessId === getBusinessId() && (
-                      <p className="mt-2 text-sm">Source: { /^(EXP|PUR)-\d{4}-\d{6,}$/.test(linkedSource.reference) ? (
-                        <Link className="font-mono text-blue-700 hover:underline" href={`${linkedSource.reference.startsWith('EXP-') ? '/expenses' : '/purchases'}?reference=${encodeURIComponent(linkedSource.reference)}`}>{linkedSource.reference}</Link>
+                      <p className="mt-2 text-sm">Source: { /^(EXP|PUR|REC|PAY)-\d{4}-\d{6,}$/.test(linkedSource.reference) ? (
+                        <Link className="font-mono text-blue-700 hover:underline" href={`${linkedSource.reference.startsWith('EXP-') ? '/expenses' : linkedSource.reference.startsWith('PUR-') ? '/purchases' : '/cash-bank'}?reference=${encodeURIComponent(linkedSource.reference)}`}>{linkedSource.reference}</Link>
                       ) : <span className="font-mono">{linkedSource.reference}</span> }</p>
                     )}
                   </div>

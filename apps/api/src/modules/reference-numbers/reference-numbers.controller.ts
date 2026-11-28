@@ -72,6 +72,9 @@ export class ReferenceNumbersController {
 
     @Query('limit')
     limit?: string,
+
+    @Query('reference')
+    reference?: string,
   ) {
     return this.paymentActivity.list(
       user.sub,
@@ -82,6 +85,7 @@ export class ReferenceNumbersController {
         direction,
         paymentMethod,
         limit,
+        reference,
       },
     );
   }

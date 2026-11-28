@@ -1963,8 +1963,8 @@ function Info({
   value: string;
 }) {
   const reference = String(value || '').trim().toUpperCase();
-  const match = /^(JE|EXP|PUR)-\d{4}-\d{6,}$/.exec(reference);
-  const routes: Record<string, string> = { JE: '/journals', EXP: '/expenses', PUR: '/purchases' };
+  const match = /^(JE|EXP|PUR|REC|PAY)-\d{4}-\d{6,}$/.exec(reference);
+  const routes: Record<string, string> = { JE: '/journals', EXP: '/expenses', PUR: '/purchases', REC: '/cash-bank', PAY: '/cash-bank' };
   const href = match && (label === 'Journal reference' || label === 'Linked record')
     ? `${routes[match[1]]}?reference=${encodeURIComponent(reference)}` : null;
   return (
