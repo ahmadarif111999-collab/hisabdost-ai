@@ -717,13 +717,12 @@ export class ExpensePurchaseRegistersService {
             row.reference,
             row.journalReference,
             row.documentReference,
-          ].some((value) =>
-            this.normalized(
-              value,
-            ).includes(
-              reference,
-            ),
-          )
+          ].some((value) => {
+            const candidate = this.normalized(value);
+            return /^(exp|pur|je|doc)-\d{4}-\d{6,}$/i.test(reference)
+              ? candidate === reference
+              : candidate.includes(reference);
+          })
         ) {
           return false;
         }

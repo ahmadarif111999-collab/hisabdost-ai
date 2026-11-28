@@ -244,7 +244,7 @@ export class XlsxExportService {
             preview?.generatedAt,
         }),
         ...this.financialStatementsToWorkbook(
-          preview,
+          this.presentation.sanitizeForExport(preview),
         ),
       ]);
 

@@ -564,11 +564,10 @@ export class ReferencePresentationService {
       }
 
       if (key === 'columns' && Array.isArray(child)) {
-        output[key] = child.filter(
-          (column) =>
-            typeof column !== 'string' ||
-            !this.isInternalIdKey(column),
-        );
+        output[key] = child.filter((column) => {
+          const columnKey = typeof column === 'string' ? column : column?.key;
+          return typeof columnKey === 'string' && !this.isInternalIdKey(columnKey);
+        });
         continue;
       }
 
@@ -1275,11 +1274,16 @@ export class ReferencePresentationService {
       const columns =
         section.columns ||
         (section.rows?.[0] ? Object.keys(section.rows[0]) : []);
-      lines.push(this.csvRow(columns));
-      for (const row of section.rows || []) {
-        lines.push(
-          this.csvRow(columns.map((column: string) => row[column] ?? '')),
+      const readableColumns = columns
+        .map((column: string | { key: string; label?: string }) =>
+          typeof column === 'string' ? { key: column, label: column } : column,
+        )
+        .filter((column: { key: string; label?: string }) =>
+          column && typeof column.key === 'string' && !this.isInternalIdKey(column.key),
         );
+      lines.push(this.csvRow(readableColumns.map((column: { key: string; label?: string }) => column.label || column.key)));
+      for (const row of section.rows || []) {
+        lines.push(this.csvRow(readableColumns.map((column: { key: string }) => row[column.key] ?? '')));
       }
       if (section.totals) {
         lines.push('');
@@ -1410,10 +1414,10 @@ export class ReferencePresentationService {
 
   private isInternalIdKey(key: string) {
     return (
-      key === 'id' ||
+      key.toLowerCase() === 'id' ||
       key === 'businessId' ||
       key.endsWith('Id') ||
-      key.endsWith('_id')
+      /[\s_-]ids?$/i.test(key)
     );
   }
 

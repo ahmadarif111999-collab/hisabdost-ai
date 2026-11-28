@@ -1,5 +1,7 @@
 'use client';
 
+import Link from 'next/link';
+
 import {
   FormEvent,
   useEffect,
@@ -1218,6 +1220,7 @@ export default function DocumentsPage() {
                       <Info label="Document reference" value={active.documentNo || active.referenceNo || 'DOC pending'} />
                       <Info label="Uploaded by" value={active.uploadedByName || 'Unknown user'} />
                       <Info label="Journal reference" value={active.linkedJournalReferenceNo || '-'} />
+                      <Info label="Linked record" value={active.linkedReferenceNo || active.linkedEntityType || '-'} />
                     </div>
 
                     {latest?.errorMessage && (
@@ -1959,6 +1962,11 @@ function Info({
   label: string;
   value: string;
 }) {
+  const reference = String(value || '').trim().toUpperCase();
+  const match = /^(JE|EXP|PUR)-\d{4}-\d{6,}$/.exec(reference);
+  const routes: Record<string, string> = { JE: '/journals', EXP: '/expenses', PUR: '/purchases' };
+  const href = match && (label === 'Journal reference' || label === 'Linked record')
+    ? `${routes[match[1]]}?reference=${encodeURIComponent(reference)}` : null;
   return (
     <div className="rounded-2xl bg-slate-50 p-3">
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
@@ -1966,7 +1974,7 @@ function Info({
       </p>
 
       <p className="mt-1 text-sm font-semibold text-slate-800">
-        {value}
+        {href ? <Link href={href} className="text-blue-700 hover:underline">{value}</Link> : value}
       </p>
     </div>
   );

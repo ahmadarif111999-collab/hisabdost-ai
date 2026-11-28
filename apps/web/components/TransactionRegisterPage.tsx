@@ -7,6 +7,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 
@@ -320,11 +321,26 @@ export function TransactionRegisterPage({
   ] =
     useState('');
 
+  const [ready, setReady] = useState(false);
+  const requestVersion = useRef(0);
+
+  useEffect(() => {
+    const reference = new URLSearchParams(window.location.search).get('reference')?.trim().toUpperCase() || '';
+    if (new RegExp(`^${prefix}-\\d{4}-\\d{6,}$`).test(reference)) {
+      const linked = { ...initialFilters, startDate: '', endDate: '', reference };
+      setFilters(linked);
+      setAppliedFilters(linked);
+    }
+    setReady(true);
+  }, [initialFilters, prefix]);
+
   const load =
     useCallback(
       async () => {
-        const businessId =
-          getBusinessId();
+        if (!ready) return;
+        const version = ++requestVersion.current;
+        const businessId = getBusinessId();
+        setResult(null);
 
         if (!businessId) {
           setResult(null);
@@ -348,10 +364,10 @@ export function TransactionRegisterPage({
               )}`,
             );
 
-          setResult(
-            response,
-          );
+          if (version !== requestVersion.current || getBusinessId() !== businessId) return;
+          setResult(response);
         } catch (loadError) {
+          if (version !== requestVersion.current || getBusinessId() !== businessId) return;
           setResult(null);
 
           setError(
@@ -361,12 +377,11 @@ export function TransactionRegisterPage({
               : `Could not load the ${title.toLowerCase()}.`,
           );
         } finally {
-          setLoading(
-            false,
-          );
+          if (version === requestVersion.current) setLoading(false);
         }
       },
       [
+        ready,
         appliedFilters,
         plural,
         title,
@@ -376,23 +391,32 @@ export function TransactionRegisterPage({
   useEffect(() => {
     void load();
 
-    window.addEventListener(
-      'pakbooks-business-changed',
-      load,
-    );
-
-    return () => {
-      window.removeEventListener(
-        'pakbooks-business-changed',
-        load,
-      );
-    };
+    return () => { requestVersion.current++; };
   }, [load]);
+
+  useEffect(() => {
+    const onBusinessChanged = () => {
+      requestVersion.current++;
+      setResult(null);
+      setMessage('');
+      setError('');
+      const url = new URL(window.location.href);
+      url.searchParams.delete('reference');
+      window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
+      setFilters({ ...initialFilters });
+      setAppliedFilters({ ...initialFilters });
+    };
+    window.addEventListener('pakbooks-business-changed', onBusinessChanged);
+    return () => window.removeEventListener('pakbooks-business-changed', onBusinessChanged);
+  }, [initialFilters]);
 
   function applyFilters(
     event: FormEvent,
   ) {
     event.preventDefault();
+    const url = new URL(window.location.href);
+    url.searchParams.delete('reference');
+    window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
 
     setMessage('');
 
@@ -433,6 +457,7 @@ export function TransactionRegisterPage({
           },
         );
 
+      if (getBusinessId() !== businessId) return;
       downloadBase64File(
         response.filename,
         response.mimeType,
