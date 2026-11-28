@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -19,6 +20,7 @@ type ReportDecisionBody = {
   decision?:
     | 'approved'
     | 'rejected';
+  status?: 'approved' | 'rejected';
   decisionNote?: string;
 };
 
@@ -63,15 +65,20 @@ export class ReferenceWorkflowController {
     @Body()
     body: ReportDecisionBody,
   ) {
+    if (body?.decision !== undefined && body?.status !== undefined && body.decision !== body.status) {
+      throw new BadRequestException('Conflicting report request decisions');
+    }
+    const decision = body?.decision ?? body?.status;
+    if (decision !== 'approved' && decision !== 'rejected') {
+      throw new BadRequestException('Decision must be approved or rejected');
+    }
     const result =
       await this.approvals().decideRequest(
         user.sub,
         businessId,
         requestId,
-        body.decision as
-          | 'approved'
-          | 'rejected',
-        body.decisionNote,
+        decision,
+        body?.decisionNote,
       );
 
     return this.presentation.decorateReportRequestPayload(
