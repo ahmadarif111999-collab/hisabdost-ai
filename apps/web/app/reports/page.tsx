@@ -299,10 +299,18 @@ function normalizeColumn(
   };
 }
 
+function referenceHref(value: unknown) {
+  const reference = String(value || '').trim().toUpperCase();
+  const match = /^(JE|DOC|EXP|PUR)-\d{4}-\d{6,}$/.exec(reference);
+  if (!match) return null;
+  const routes: Record<string, string> = { JE: '/journals', DOC: '/documents', EXP: '/expenses', PUR: '/purchases' };
+  return `${routes[match[1]]}?reference=${encodeURIComponent(reference)}`;
+}
+
 function referenceLike(
   value: any,
 ) {
-  return /^(JE|INV|EXP|PUR|PAY|REC|RPT|EX|DOC)-\d{4}-\d{6}$/i.test(
+  return /^(JE|INV|EXP|PUR|PAY|REC|RPT|EX|DOC)-\d{4}-\d{6,}$/i.test(
     String(
       value || '',
     ),
@@ -1299,7 +1307,11 @@ function SectionTable({
                               : 'text-left'
                           }`}
                         >
-                          {referenceLike(
+                          {referenceHref(value) ? (
+                            <Link href={referenceHref(value)!} className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 font-mono text-xs font-semibold text-emerald-700 hover:underline">
+                              {String(value)}
+                            </Link>
+                          ) : referenceLike(
                             value,
                           ) ? (
                             <span className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 font-mono text-xs font-semibold text-emerald-700">

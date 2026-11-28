@@ -1,5 +1,7 @@
 'use client';
 
+import Link from 'next/link';
+
 import { useEffect, useRef, useState } from 'react';
 import { AppShell } from '@/components/AppShell';
 import { ClientRequired } from '@/components/ClientRequired';
@@ -58,6 +60,22 @@ export default function JournalsPage() {
   const dateFilter = useRef({ from, to });
   dateFilter.current = { from, to };
   const [linkedReference, setLinkedReference] = useState('');
+  const [linkedSource, setLinkedSource] = useState<{ entryNo: string; businessId: string; reference: string } | null>(null);
+  useEffect(() => {
+    let active = true;
+    setLinkedSource(null);
+    const businessId = getBusinessId();
+    const entryNo = selected?.entryNo;
+    if (businessId && entryNo && /^JE-\d{4}-\d{6}$/.test(entryNo)) {
+      void api<{ linkedReferenceNo?: string }>(`/references/businesses/${businessId}/resolve/${encodeURIComponent(entryNo)}`)
+        .then((result) => {
+          if (active && getBusinessId() === businessId && result.linkedReferenceNo) {
+            setLinkedSource({ entryNo, businessId, reference: result.linkedReferenceNo });
+          }
+        }).catch(() => { /* The journal remains usable if the source reference is unavailable. */ });
+    }
+    return () => { active = false; };
+  }, [selected?.entryNo, selected?.id]);
 
   function clearReferenceLink() {
     const url = new URL(window.location.href);
@@ -249,6 +267,11 @@ export default function JournalsPage() {
                     <p className="mt-1 text-xs text-slate-500">
                       Created by {selected.createdBy} • Status {selected.status}
                     </p>
+                    {linkedSource?.entryNo === selected.entryNo && linkedSource.businessId === getBusinessId() && (
+                      <p className="mt-2 text-sm">Source: { /^(EXP|PUR)-\d{4}-\d{6,}$/.test(linkedSource.reference) ? (
+                        <Link className="font-mono text-blue-700 hover:underline" href={`${linkedSource.reference.startsWith('EXP-') ? '/expenses' : '/purchases'}?reference=${encodeURIComponent(linkedSource.reference)}`}>{linkedSource.reference}</Link>
+                      ) : <span className="font-mono">{linkedSource.reference}</span> }</p>
+                    )}
                   </div>
 
                   <div className="overflow-hidden rounded-2xl border border-slate-200">

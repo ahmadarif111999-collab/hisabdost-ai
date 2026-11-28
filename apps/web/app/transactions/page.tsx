@@ -164,17 +164,14 @@ export default function TransactionsPage() {
   useEffect(() => {
     void loadAccounts();
 
-    window.addEventListener(
-      'pakbooks-business-changed',
-      loadAccounts,
-    );
-
-    return () => {
-      window.removeEventListener(
-        'pakbooks-business-changed',
-        loadAccounts,
-      );
+    const onBusinessChanged = () => {
+      setMessage('');
+      setReferenceNo('');
+      setRecordedWithoutDocument(false);
+      void loadAccounts();
     };
+    window.addEventListener('pakbooks-business-changed', onBusinessChanged);
+    return () => window.removeEventListener('pakbooks-business-changed', onBusinessChanged);
   }, []);
 
   const accountOptions =
@@ -442,9 +439,14 @@ export default function TransactionsPage() {
         }
       }
 
-      setReferenceNo(
-        createdReference,
-      );
+      if (getBusinessId() !== businessId) {
+        setMessage('');
+        setReferenceNo('');
+        setRecordedWithoutDocument(false);
+        setError('');
+        return;
+      }
+      setReferenceNo(createdReference);
 
       setAmount('');
       setPartyName('');
@@ -498,7 +500,9 @@ export default function TransactionsPage() {
               {referenceNo && (
                 <p className="mt-2 font-mono text-base font-bold text-emerald-900">
                   Reference:{' '}
-                  {referenceNo}
+                  {/^(EXP|PUR|JE)-\d{4}-\d{6,}$/.test(referenceNo) ? (
+                    <Link className="underline" href={`${referenceNo.startsWith('EXP-') ? '/expenses' : referenceNo.startsWith('PUR-') ? '/purchases' : '/journals'}?reference=${encodeURIComponent(referenceNo)}`}>{referenceNo}</Link>
+                  ) : referenceNo}
                 </p>
               )}
             </div>
