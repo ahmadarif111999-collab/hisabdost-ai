@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -88,16 +89,24 @@ export class AccountingReportingController {
     @Param('requestId') requestId: string,
     @Body()
     dto: {
+      decision?: 'approved' | 'rejected';
       status?: 'approved' | 'rejected';
       decisionNote?: string;
     },
   ) {
+    if (dto?.decision !== undefined && dto?.status !== undefined && dto.decision !== dto.status) {
+      throw new BadRequestException('Conflicting report request decisions');
+    }
+    const decision = dto?.decision ?? dto?.status;
+    if (decision !== 'approved' && decision !== 'rejected') {
+      throw new BadRequestException('Decision must be approved or rejected');
+    }
     return this.reportApproval.decideRequest(
       user.sub,
       businessId,
       requestId,
-      dto.status as 'approved' | 'rejected',
-      dto.decisionNote,
+      decision,
+      dto?.decisionNote,
     );
   }
 }
