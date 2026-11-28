@@ -4,6 +4,7 @@ import Link from 'next/link';
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 
@@ -402,7 +403,14 @@ export default function ReportRequestsPage() {
   ] =
     useState('');
 
+  const loadVersion = useRef(0);
+  const [linkedClient, setLinkedClient] = useState<string | null>(null);
+  const [linkedReference, setLinkedReference] = useState('');
   async function load() {
+    const version = ++loadVersion.current;
+    const selectedBusiness = getBusinessId();
+    const current = () => version === loadVersion.current && selectedBusiness === getBusinessId();
+    setRequests([]);
     setError('');
 
     setLoading(
@@ -429,6 +437,7 @@ export default function ReportRequestsPage() {
             '/firm/report-export-requests',
           );
 
+        if (!current()) return;
         setMode(
           'firm',
         );
@@ -459,8 +468,8 @@ export default function ReportRequestsPage() {
          */
       }
 
-      const businessId =
-        getBusinessId();
+      if (!current()) return;
+      const businessId = selectedBusiness;
 
       if (!businessId) {
         setMode(
@@ -483,6 +492,7 @@ export default function ReportRequestsPage() {
           `/accounting/businesses/${businessId}/reporting/export-requests`,
         );
 
+      if (!current()) return;
       setMode(
         result.isFirmUser
           ? 'firm'
@@ -509,6 +519,7 @@ export default function ReportRequestsPage() {
     } catch (
       loadError
     ) {
+      if (!current()) return;
       setRequests(
         [],
       );
@@ -520,7 +531,7 @@ export default function ReportRequestsPage() {
           : 'Could not load report export requests',
       );
     } finally {
-      setLoading(
+      if (current()) setLoading(
         false,
       );
     }
@@ -528,15 +539,13 @@ export default function ReportRequestsPage() {
 
   useEffect(
     () => {
-      const queryStatus =
-        new URLSearchParams(
-          window.location.search,
-        ).get(
-          'status',
-        );
+      const params = new URLSearchParams(window.location.search);
+      const queryStatus = params.get('status');
+      const reference = params.get('reference');
+      if (reference) { setSearch(reference); setLinkedReference(reference.trim().toUpperCase()); setLinkedClient(getBusinessId()); setStatus('all'); }
 
       if (
-        queryStatus &&
+        !reference && queryStatus &&
         statusOptions.includes(
           queryStatus,
         )
@@ -548,16 +557,17 @@ export default function ReportRequestsPage() {
 
       void load();
 
-      window.addEventListener(
-        'pakbooks-business-changed',
-        load,
-      );
-
+      const onBusinessChange = () => {
+        setLinkedClient(null); setLinkedReference(''); setSearch('');
+        const url = new URL(window.location.href);
+        url.searchParams.delete('reference');
+        window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
+        void load();
+      };
+      window.addEventListener('pakbooks-business-changed', onBusinessChange);
       return () => {
-        window.removeEventListener(
-          'pakbooks-business-changed',
-          load,
-        );
+        loadVersion.current++;
+        window.removeEventListener('pakbooks-business-changed', onBusinessChange);
       };
     },
     [],
@@ -575,6 +585,7 @@ export default function ReportRequestsPage() {
           (
             request,
           ) => {
+            if (linkedReference && (request.businessId !== linkedClient || ![requestReference(request), request.exportNo].some((value) => String(value || '').toUpperCase() === linkedReference))) return false;
             if (
               status !==
                 'all' &&
@@ -637,6 +648,8 @@ export default function ReportRequestsPage() {
         requests,
         search,
         status,
+        linkedClient,
+        linkedReference,
       ],
     );
 
@@ -995,11 +1008,13 @@ export default function ReportRequestsPage() {
               onChange={(
                 event,
               ) =>
-                setSearch(
-                  event
-                    .target
-                    .value,
-                )
+                {
+                  setLinkedClient(null); setLinkedReference('');
+                  const url = new URL(window.location.href);
+                  url.searchParams.delete('reference');
+                  window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
+                  setSearch(event.target.value);
+                }
               }
               placeholder="Search RPT, EX, report, client, requester…"
               className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-emerald-500"
@@ -1069,11 +1084,9 @@ export default function ReportRequestsPage() {
                           </span>
 
                           {request.exportNo ? (
-                            <span className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 font-mono text-xs font-bold text-emerald-700">
-                              {
-                                request.exportNo
-                              }
-                            </span>
+                            request.businessId === getBusinessId() ? (
+                              <Link className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 font-mono text-xs font-bold text-emerald-700 hover:underline" href={`/export-history?reference=${encodeURIComponent(request.exportNo)}`}>{request.exportNo}</Link>
+                            ) : <span title="Select this request's client to open its export history" className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 font-mono text-xs font-bold text-emerald-700">{request.exportNo}</span>
                           ) : null}
 
                           <span

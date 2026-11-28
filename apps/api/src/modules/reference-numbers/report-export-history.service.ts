@@ -57,6 +57,33 @@ export class ReportExportHistoryService {
         })),
       );
 
+    const completedRequests = await this.prisma.reportExportRequest.findMany({
+      where: { businessId, status: 'exported', ...(access.firmMembership ? {} : { requestedById: userId }) },
+      select: { id: true, createdAt: true, filtersJson: true, requestedBy: { select: { name: true, email: true } }, decidedBy: { select: { name: true, email: true } } },
+    });
+    const audits = completedRequests.length ? await this.prisma.auditLog.findMany({
+      where: { businessId, action: 'REPORT_EXPORT_REQUEST_EXPORTED', entityType: 'ReportExportRequest', entityId: { in: completedRequests.map((request) => request.id) } },
+      select: { entityId: true, afterJson: true },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    }) : [];
+    const auditByRequest = new Map<string, string>();
+    for (const audit of audits) {
+      const ref = this.jsonObject(audit.afterJson).exportReference;
+      if (audit.entityId && typeof ref === 'string' && /^EX-\d{4}-\d{6,}$/.test(ref) && !auditByRequest.has(audit.entityId)) auditByRequest.set(audit.entityId, ref);
+    }
+    const requestReferences = await this.references.ensureMany(businessId, 'report_request', completedRequests.map((request) => ({ id: request.id, date: request.createdAt })));
+    const visibleExports = new Set(Object.values(referenceById));
+    const requestByExport = new Map<string, (typeof completedRequests)[number]>();
+    const ambiguous = new Set<string>();
+    for (const request of completedRequests) {
+      const metadata = this.jsonObject(request.filtersJson);
+      const ref = auditByRequest.get(request.id) || metadata.completedExportReference;
+      if (typeof ref !== 'string' || !visibleExports.has(ref)) continue;
+      if (requestByExport.has(ref)) { ambiguous.add(ref); continue; }
+      requestByExport.set(ref, request);
+    }
+    for (const ref of ambiguous) requestByExport.delete(ref);
+
     return {
       isFirmUser: Boolean(
         access.firmMembership,
@@ -72,7 +99,11 @@ export class ReportExportHistoryService {
               record.id
             ];
 
+          const request = requestByExport.get(exportNo);
           return {
+            requestNo: request ? requestReferences[request.id] || null : null,
+            requestedByName: request ? this.personLabel(request.requestedBy) : null,
+            decidedByName: request ? this.personLabel(request.decidedBy) : null,
             exportNo,
 
             referenceNo:
@@ -109,6 +140,14 @@ export class ReportExportHistoryService {
           };
         }),
     };
+  }
+
+  private jsonObject(value: unknown): Record<string, unknown> {
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  }
+
+  private personLabel(person?: { name: string | null; email: string | null } | null) {
+    return person?.name?.trim() || person?.email?.trim() || 'Unknown user';
   }
 
   private displayFilename(

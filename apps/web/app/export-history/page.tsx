@@ -6,6 +6,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 
@@ -44,6 +45,9 @@ type ExportHistoryRow = {
   createdAt: string;
 
   exportedByName?: string;
+  requestNo?: string | null;
+  requestedByName?: string | null;
+  decidedByName?: string | null;
 };
 
 type ExportHistoryResponse = {
@@ -164,11 +168,17 @@ export default function ExportHistoryPage() {
   ] =
     useState('');
 
+  const [search, setSearch] = useState('');
+  const version = useRef(0);
+
   const load =
     useCallback(
       async () => {
+        const requestVersion = ++version.current;
         const businessId =
           getBusinessId();
+        setResult(null);
+        setError('');
 
         if (!businessId) {
           setResult(
@@ -194,12 +204,14 @@ export default function ExportHistoryPage() {
               `/accounting/businesses/${businessId}/reporting/report-exports`,
             );
 
+          if (requestVersion !== version.current || getBusinessId() !== businessId) return;
           setResult(
             response,
           );
         } catch (
           loadError
         ) {
+          if (requestVersion !== version.current || getBusinessId() !== businessId) return;
           setResult(
             null,
           );
@@ -211,7 +223,7 @@ export default function ExportHistoryPage() {
               : 'Could not load export history.',
           );
         } finally {
-          setLoading(
+          if (requestVersion === version.current && getBusinessId() === businessId) setLoading(
             false,
           );
         }
@@ -220,24 +232,30 @@ export default function ExportHistoryPage() {
     );
 
   useEffect(() => {
+    setSearch(new URLSearchParams(window.location.search).get('reference') || '');
     void load();
-
-    window.addEventListener(
-      'pakbooks-business-changed',
-      load,
-    );
-
+    const onBusinessChange = () => {
+      setSearch('');
+      const url = new URL(window.location.href);
+      url.searchParams.delete('reference');
+      window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
+      void load();
+    };
+    window.addEventListener('pakbooks-business-changed', onBusinessChange);
     return () => {
-      window.removeEventListener(
-        'pakbooks-business-changed',
-        load,
-      );
+      version.current++;
+      window.removeEventListener('pakbooks-business-changed', onBusinessChange);
     };
   }, [load]);
 
   const exports =
     result?.exports ||
     [];
+
+  const filteredExports = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return !query ? exports : exports.filter((record) => [record.exportNo, record.requestNo, record.filename, record.reportType, record.exportedByName, record.requestedByName, record.decidedByName].some((value) => String(value || '').toLowerCase().includes(query)));
+  }, [exports, search]);
 
   const xlsxCount =
     useMemo(
@@ -389,12 +407,15 @@ export default function ExportHistoryPage() {
               </button>
             </div>
 
+            <label className="mt-4 block text-sm font-semibold text-slate-700">Search export history
+              <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="EX, RPT, report, filename or name" className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 font-normal" />
+            </label>
             {loading ? (
               <div className="py-12 text-center text-sm text-slate-500">
                 Loading export
                 history…
               </div>
-            ) : exports.length ? (
+            ) : filteredExports.length ? (
               <div className="mt-4 overflow-x-auto">
                 <table className="min-w-[1000px] w-full border-separate border-spacing-0 text-sm">
                   <thead>
@@ -424,11 +445,12 @@ export default function ExportHistoryPage() {
                         Generated
                       </th>
                       <th className="border-b border-slate-200 px-3 py-3">Exported by</th>
+                      <th className="border-b border-slate-200 px-3 py-3">Approval request</th>
                     </tr>
                   </thead>
 
                   <tbody>
-                    {exports.map(
+                    {filteredExports.map(
                       (record) => (
                         <tr
                           key={
@@ -483,6 +505,9 @@ export default function ExportHistoryPage() {
                           <td className="border-b border-slate-100 px-3 py-4 text-slate-600">
                             {record.exportedByName || 'Unknown user'}
                           </td>
+                          <td className="border-b border-slate-100 px-3 py-4 text-slate-600">
+                            {record.requestNo ? <><Link className="font-mono font-semibold text-blue-700 hover:underline" href={`/report-requests?reference=${encodeURIComponent(record.requestNo)}`}>{record.requestNo}</Link><div className="mt-1 text-xs">Requested by: {record.requestedByName || 'Unknown user'}</div><div className="text-xs">Decided by: {record.decidedByName || 'Unknown user'}</div></> : <span>-</span>}
+                          </td>
                         </tr>
                       ),
                     )}
@@ -492,8 +517,7 @@ export default function ExportHistoryPage() {
             ) : (
               <div className="py-12 text-center">
                 <h3 className="text-lg font-bold text-slate-900">
-                  No completed
-                  exports yet
+                  {search.trim() ? 'No matching exports' : 'No completed exports yet'}
                 </h3>
 
                 <p className="mt-2 text-sm text-slate-500">
@@ -512,10 +536,7 @@ export default function ExportHistoryPage() {
             currently records
             completed export
             metadata.
-            Re-download behavior
-            remains part of the
-            later frozen export
-            history implementation.
+            This view records metadata; it does not store downloadable report files.
           </p>
         </div>
       </ClientRequired>

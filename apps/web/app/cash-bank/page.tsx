@@ -4,6 +4,7 @@ import Link from 'next/link';
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import { AppShell } from '@/components/AppShell';
@@ -27,6 +28,7 @@ type PaymentRow = {
   id: string;
   paymentNo: string;
   displayNumber: string;
+  journalReference?: string | null;
   direction: string;
   directionLabel: string;
   partyType?: string | null;
@@ -115,7 +117,16 @@ export default function CashBankPage() {
     setError,
   ] = useState('');
 
-  async function load() {
+  const version = useRef(0);
+  const [linkedReference, setLinkedReference] = useState('');
+  const filters = useRef({ from, to, direction, paymentMethod });
+  filters.current = { from, to, direction, paymentMethod };
+
+  async function load(reference = '') {
+    const requestVersion = ++version.current;
+    setLinkedReference(reference);
+    setData(null);
+    setActivity(null);
     const businessId =
       getBusinessId();
 
@@ -137,14 +148,16 @@ export default function CashBankPage() {
     const params =
       new URLSearchParams();
 
-    if (from) {
+    const { from, to, direction, paymentMethod } = filters.current;
+    if (reference) params.set('reference', reference);
+    if (!reference && from) {
       params.set(
         'from',
         from,
       );
     }
 
-    if (to) {
+    if (!reference && to) {
       params.set(
         'to',
         to,
@@ -152,7 +165,7 @@ export default function CashBankPage() {
     }
 
     if (
-      direction !== 'all'
+      !reference && direction !== 'all'
     ) {
       params.set(
         'direction',
@@ -161,7 +174,7 @@ export default function CashBankPage() {
     }
 
     if (
-      paymentMethod !== 'all'
+      !reference && paymentMethod !== 'all'
     ) {
       params.set(
         'paymentMethod',
@@ -188,6 +201,7 @@ export default function CashBankPage() {
         ),
       ]);
 
+      if (requestVersion !== version.current || getBusinessId() !== businessId) return;
       setData(
         dashboardResult,
       );
@@ -196,6 +210,7 @@ export default function CashBankPage() {
         activityResult,
       );
     } catch (loadError) {
+      if (requestVersion !== version.current || getBusinessId() !== businessId) return;
       setData(null);
       setActivity(null);
 
@@ -206,35 +221,43 @@ export default function CashBankPage() {
           : 'Could not load cash and bank activity.',
       );
     } finally {
-      setLoading(false);
+      if (requestVersion === version.current && getBusinessId() === businessId) setLoading(false);
     }
   }
 
+  function referenceFromUrl() {
+    return new URLSearchParams(window.location.search).get('reference')?.trim().toUpperCase() || '';
+  }
+
+  function openPayment(reference: string) {
+    const url = new URL(window.location.href);
+    url.searchParams.set('reference', reference);
+    window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
+    setSearch('');
+    void load(reference);
+  }
+
+  function clearReference() {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('reference');
+    window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
+    setLinkedReference('');
+  }
+
   useEffect(() => {
-    void load();
-
-    window.addEventListener(
-      'pakbooks-business-changed',
-      load,
-    );
-
+    void load(referenceFromUrl());
+    const onBusinessChange = () => { clearReference(); setSearch(''); void load(); };
+    window.addEventListener('pakbooks-business-changed', onBusinessChange);
     return () => {
-      window.removeEventListener(
-        'pakbooks-business-changed',
-        load,
-      );
+      version.current++;
+      window.removeEventListener('pakbooks-business-changed', onBusinessChange);
     };
-  }, [
-    from,
-    to,
-    direction,
-    paymentMethod,
-  ]);
+  }, [from, to, direction, paymentMethod]);
 
   const filteredRows =
     useMemo(() => {
       const query =
-        search
+        (linkedReference ? '' : search)
           .trim()
           .toLowerCase();
 
@@ -249,6 +272,7 @@ export default function CashBankPage() {
       ).filter((row) =>
         [
           row.paymentNo,
+          row.journalReference,
           row.partyName,
           row.paymentMethodLabel,
           row.accountCode,
@@ -263,14 +287,16 @@ export default function CashBankPage() {
               .includes(query),
           ),
       );
-    }, [activity, search]);
+    }, [activity, search, linkedReference]);
 
   function clearFilters() {
+    clearReference();
     setFrom('');
     setTo('');
     setDirection('all');
     setPaymentMethod('all');
     setSearch('');
+    if (!from && !to && direction === 'all' && paymentMethod === 'all') void load();
   }
 
   return (
@@ -292,7 +318,7 @@ export default function CashBankPage() {
                 payment activity using
                 permanent references
                 such as
-                PAY-2026-000001.
+                REC-2026-000001 and PAY-2026-000001.
                 External bank or
                 cheque references
                 remain visible
@@ -303,7 +329,7 @@ export default function CashBankPage() {
             <button
               type="button"
               onClick={() =>
-                void load()
+                void load(referenceFromUrl())
               }
               disabled={loading}
               className="rounded-2xl border border-white/20 bg-white/10 px-4 py-3 text-sm font-semibold text-white hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-60"
@@ -320,6 +346,12 @@ export default function CashBankPage() {
             </div>
           )}
 
+          {linkedReference && (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+              Linked payment: <strong>{linkedReference}</strong>. Date and method filters are ignored for this exact reference.
+              <button type="button" onClick={clearFilters} className="ml-3 font-bold underline">Show all payments</button>
+            </div>
+          )}
           {data && (
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
               <Metric
@@ -556,7 +588,7 @@ export default function CashBankPage() {
                         .value,
                     )
                   }
-                  placeholder="PAY number, party, note..."
+                  placeholder="REC, PAY, JE, party, note..."
                   className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 font-normal outline-none focus:border-emerald-500"
                 />
               </label>
@@ -645,12 +677,13 @@ export default function CashBankPage() {
                           className="align-top hover:bg-slate-50/70"
                         >
                           <td className="px-4 py-3">
-                            <p className="font-mono text-sm font-bold text-slate-900">
-                              {
-                                row.paymentNo
-                              }
-                            </p>
+                            {/^(REC|PAY)-\d{4}-\d{6,}$/.test(row.paymentNo) ? (
+                              <button type="button" onClick={() => openPayment(row.paymentNo)} className="font-mono text-sm font-bold text-blue-700 hover:underline">{row.paymentNo}</button>
+                            ) : <p className="font-mono text-sm font-bold text-slate-900">{row.paymentNo}</p>}
 
+                            {row.journalReference && (
+                              <Link href={`/journals?reference=${encodeURIComponent(row.journalReference)}`} className="mt-1 block font-mono text-xs text-blue-700 hover:underline">{row.journalReference}</Link>
+                            )}
                             {row.notes && (
                               <p className="mt-1 max-w-xs text-xs text-slate-500">
                                 {

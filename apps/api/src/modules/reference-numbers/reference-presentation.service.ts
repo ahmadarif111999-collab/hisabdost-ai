@@ -120,6 +120,23 @@ export class ReferencePresentationService {
       Object.assign(referenceByRequestId, map);
     }
 
+    const completionByRequest = new Map<string, { exportNo: string; filename: string | null; completedAt: Date }>();
+    for (const [businessId, businessRequests] of grouped.entries()) {
+      const ids = businessRequests.filter((request) => request.status === 'exported').map((request) => request.id);
+      if (!ids.length) continue;
+      const audits = await this.prisma.auditLog.findMany({
+        where: { businessId, action: 'REPORT_EXPORT_REQUEST_EXPORTED', entityType: 'ReportExportRequest', entityId: { in: ids } },
+        select: { entityId: true, afterJson: true, createdAt: true },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      });
+      for (const audit of audits) {
+        const metadata = this.jsonObject(audit.afterJson);
+        const key = `${businessId}:${audit.entityId}`;
+        if (!audit.entityId || completionByRequest.has(key) || typeof metadata.exportReference !== 'string' || !/^EX-\d{4}-\d{6,}$/.test(metadata.exportReference)) continue;
+        completionByRequest.set(key, { exportNo: metadata.exportReference, filename: typeof metadata.filename === 'string' ? metadata.filename : null, completedAt: audit.createdAt });
+      }
+    }
+
     const userMap = await this.loadUsers(
       requests.flatMap((request) => [
         request.requestedById,
@@ -147,15 +164,10 @@ export class ReferencePresentationService {
       request.decidedBy = decidedBy;
       request.requestedByName = this.personLabel(requestedBy);
       request.decidedByName = this.personLabel(decidedBy);
-      request.exportNo =
-        metadata.completedExportReference ||
-        metadata.exportReference ||
-        request.exportNo ||
-        null;
-      request.completedFilename =
-        metadata.completedFilename || request.completedFilename || null;
-      request.completedAt =
-        metadata.completedAt || request.completedAt || null;
+      const completion = completionByRequest.get(`${request.businessId}:${request.id}`);
+      request.exportNo = request.status === 'exported' ? (completion?.exportNo || metadata.completedExportReference || request.exportNo || null) : null;
+      request.completedFilename = request.status === 'exported' ? (completion?.filename || metadata.completedFilename || request.completedFilename || null) : null;
+      request.completedAt = request.status === 'exported' ? (completion?.completedAt || metadata.completedAt || request.completedAt || null) : null;
 
       delete request.requestedById;
       delete request.decidedById;

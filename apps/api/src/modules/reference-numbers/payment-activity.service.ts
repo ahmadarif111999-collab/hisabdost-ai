@@ -13,6 +13,7 @@ type PaymentActivityFilter = {
   direction?: string;
   paymentMethod?: string;
   limit?: string;
+  reference?: string;
 };
 
 @Injectable()
@@ -33,6 +34,14 @@ export class PaymentActivityService {
       businessId,
     );
 
+    const reference = String(filter.reference || '').trim().toUpperCase();
+    if (reference && !/^(REC|PAY)-\d{4}-\d{6,}$/.test(reference)) {
+      throw new BadRequestException('Invalid payment reference');
+    }
+    const linked = reference ? await this.prisma.businessReference.findFirst({
+      where: { businessId, referenceNo: reference, entityType: reference.startsWith('REC-') ? 'receipt' : 'payment' },
+      select: { entityId: true },
+    }) : null;
     const direction = this.normalizeDirection(
       filter.direction,
     );
@@ -56,7 +65,7 @@ export class PaymentActivityService {
     );
 
     if (
-      fromDate &&
+      !reference && fromDate &&
       toDate &&
       fromDate.getTime() > toDate.getTime()
     ) {
@@ -67,17 +76,18 @@ export class PaymentActivityService {
 
     const where = {
       businessId,
-      ...(direction
+      ...(reference ? { id: { in: linked ? [linked.entityId] : [] }, direction: reference.startsWith('REC-') ? 'received' : 'paid' } : {}),
+      ...(!reference && direction
         ? {
             direction,
           }
         : {}),
-      ...(paymentMethod
+      ...(!reference && paymentMethod
         ? {
             paymentMethod,
           }
         : {}),
-      ...(fromDate || toDate
+      ...(!reference && (fromDate || toDate)
         ? {
             paymentDate: {
               ...(fromDate
@@ -135,6 +145,22 @@ export class PaymentActivityService {
           date: payment.paymentDate,
         })),
       );
+
+    const journalEntries = payments.length ? await this.prisma.journalEntry.findMany({
+      where: { businessId, sourceType: { in: ['customer_payment', 'supplier_payment', 'payment'] }, sourceId: { in: payments.map((payment) => payment.id) } },
+      select: { id: true, sourceId: true, sourceType: true, entryDate: true },
+      orderBy: [{ entryDate: 'asc' }, { id: 'asc' }],
+    }) : [];
+    const journalReferences = await this.references.ensureMany(businessId, 'journal', journalEntries.map((entry) => ({ id: entry.id, date: entry.entryDate })));
+    const journalByPayment = new Map<string, string>();
+    const paymentById = new Map(payments.map((payment) => [payment.id, payment]));
+    for (const entry of journalEntries) {
+      if (!entry.sourceId || journalByPayment.has(entry.sourceId)) continue;
+      const payment = paymentById.get(entry.sourceId);
+      if (!payment || (entry.sourceType !== 'payment' && entry.sourceType !== (payment.direction === 'received' ? 'customer_payment' : 'supplier_payment'))) continue;
+      const journalNo = journalReferences[entry.id];
+      if (journalNo) journalByPayment.set(entry.sourceId, journalNo);
+    }
 
     const customerIds = payments
       .filter(
@@ -264,12 +290,13 @@ export class PaymentActivityService {
       timezone: 'Asia/Karachi',
 
       filters: {
-        from: filter.from || null,
-        to: filter.to || null,
+        reference: reference || null,
+        from: reference ? null : filter.from || null,
+        to: reference ? null : filter.to || null,
         direction:
-          direction || 'all',
+          reference ? (reference.startsWith('REC-') ? 'received' : 'paid') : direction || 'all',
         paymentMethod:
-          paymentMethod || 'all',
+          reference ? 'all' : paymentMethod || 'all',
         limit,
       },
 
@@ -309,13 +336,15 @@ export class PaymentActivityService {
               referenceMap[
                 payment.id
               ] ||
-              'PAY-PENDING',
+              (payment.direction === 'received' ? 'REC-PENDING' : 'PAY-PENDING'),
 
             displayNumber:
               referenceMap[
                 payment.id
               ] ||
-              'PAY-PENDING',
+              (payment.direction === 'received' ? 'REC-PENDING' : 'PAY-PENDING'),
+
+            journalReference: journalByPayment.get(payment.id) || null,
 
             direction:
               payment.direction,
